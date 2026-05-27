@@ -1,6 +1,8 @@
 package com.paymentservice.payment
 
 import jakarta.persistence.*
+import org.hibernate.annotations.JdbcTypeCode
+import org.hibernate.type.SqlTypes
 import java.time.Instant
 import java.util.UUID
 
@@ -27,6 +29,7 @@ class Transaction(
     @Enumerated(EnumType.STRING)
     var status: PaymentStatus = PaymentStatus.CREATED,
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "payment_method", columnDefinition = "jsonb")
     var paymentMethod: String? = null,
 
