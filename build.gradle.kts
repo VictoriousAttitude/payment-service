@@ -19,6 +19,8 @@ repositories {
 	mavenCentral()
 }
 
+extra["testcontainers.version"] = "1.21.4"
+
 dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
