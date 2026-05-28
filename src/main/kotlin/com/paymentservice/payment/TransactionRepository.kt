@@ -24,8 +24,8 @@ interface TransactionRepository : JpaRepository<Transaction, UUID> {
 
     @Query("""
         SELECT t FROM Transaction t
-        WHERE t.status IN ('CAPTURED', 'SETTLED', 'REFUNDED')
+        WHERE t.status IN :statuses
         AND t.id NOT IN (SELECT DISTINCT le.transactionId FROM LedgerEntry le)
     """)
-    fun findWithoutLedgerEntries(): List<Transaction>
+    fun findWithoutLedgerEntries(statuses: Collection<PaymentStatus>): List<Transaction>
 }

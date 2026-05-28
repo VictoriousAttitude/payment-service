@@ -1,6 +1,8 @@
 package com.paymentservice.ledger
 
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Propagation
+import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
 
 @Service
@@ -13,6 +15,7 @@ class LedgerService(
         val PLATFORM_ACCOUNT_ID: UUID = UUID.fromString("00000000-0000-0000-0000-000000000001")
     }
 
+    @Transactional(propagation = Propagation.MANDATORY)
     fun createCaptureEntries(transactionId: UUID, merchantId: UUID, amount: Long, currency: String) {
         val fee = amount * PLATFORM_FEE_BPS / 10_000
         val merchantAmount = amount - fee
@@ -51,6 +54,7 @@ class LedgerService(
         ledgerRepository.saveAll(entries)
     }
 
+    @Transactional(propagation = Propagation.MANDATORY)
     fun createRefundEntries(transactionId: UUID, merchantId: UUID, amount: Long, currency: String) {
         val fee = amount * PLATFORM_FEE_BPS / 10_000
         val merchantAmount = amount - fee

@@ -21,6 +21,11 @@ class ReconciliationService(
             PaymentStatus.PENDING,
             PaymentStatus.AUTHORIZED
         )
+        private val STATUSES_REQUIRING_LEDGER = setOf(
+            PaymentStatus.CAPTURED,
+            PaymentStatus.SETTLED,
+            PaymentStatus.REFUNDED
+        )
     }
 
     /**
@@ -39,7 +44,7 @@ class ReconciliationService(
      * If this returns anything, data is missing — a critical consistency failure.
      */
     fun findTransactionsWithoutLedgerEntries(): List<Transaction> {
-        return transactionRepository.findWithoutLedgerEntries()
+        return transactionRepository.findWithoutLedgerEntries(STATUSES_REQUIRING_LEDGER)
     }
 
     /**
