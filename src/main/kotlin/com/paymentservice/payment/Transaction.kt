@@ -45,7 +45,17 @@ class Transaction(
     val createdAt: Instant = Instant.now(),
 
     @Column(name = "updated_at", nullable = false)
-    var updatedAt: Instant = Instant.now()
+    var updatedAt: Instant = Instant.now(),
+
+    /**
+     * Optimistic lock. The state machine validates transitions in memory;
+     * this enforces them against concurrent writers at the DB level.
+     * Concurrent capture: loser's UPDATE matches 0 rows -> whole transaction
+     * (including its ledger inserts) rolls back.
+     */
+    @Version
+    @Column(nullable = false)
+    var version: Long = 0
 ) {
     fun transitionTo(newStatus: PaymentStatus) {
         status = status.transitionTo(newStatus)

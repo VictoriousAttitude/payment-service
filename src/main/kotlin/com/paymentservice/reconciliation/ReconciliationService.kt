@@ -1,5 +1,6 @@
 package com.paymentservice.reconciliation
 
+import com.paymentservice.ledger.EntryType
 import com.paymentservice.ledger.LedgerRepository
 import com.paymentservice.payment.PaymentStatus
 import com.paymentservice.payment.Transaction
@@ -57,6 +58,26 @@ class ReconciliationService(
     }
 
     /**
+     * Q3c: Is the data present exactly once?
+     * Finds transactions whose ledger debit total does not match the expected
+     * amount. A duplicated capture entry set is balanced per-transaction and
+     * globally — debit==credit checks are blind to it. Comparing entry totals
+     * against the source-of-truth transaction amount is the only check that
+     * catches duplication.
+     */
+    fun findTransactionsWithMismatchedAmounts(): List<UUID> {
+        // CAPTURED/SETTLED: one capture set debits exactly `amount`
+        val captured = transactionRepository.findWithMismatchedDebitTotal(
+            setOf(PaymentStatus.CAPTURED, PaymentStatus.SETTLED), 1L, EntryType.DEBIT
+        )
+        // REFUNDED: capture set + refund set each debit `amount` -> 2x
+        val refunded = transactionRepository.findWithMismatchedDebitTotal(
+            setOf(PaymentStatus.REFUNDED), 2L, EntryType.DEBIT
+        )
+        return captured + refunded
+    }
+
+    /**
      * Global system health: do all debits equal all credits across the entire ledger?
      * If false, money has appeared from nowhere or disappeared. Red alert.
      */
@@ -77,16 +98,19 @@ class ReconciliationService(
         val stuckTransactions = findStuckTransactions(stuckThreshold)
         val missingEntries = findTransactionsWithoutLedgerEntries()
         val unbalanced = findUnbalancedTransactions()
+        val mismatchedAmounts = findTransactionsWithMismatchedAmounts()
         val globalBalance = verifyGlobalLedgerBalance()
 
         return ReconciliationReport(
             stuckTransactions = stuckTransactions.map { it.id },
             transactionsWithoutLedgerEntries = missingEntries.map { it.id },
             unbalancedTransactions = unbalanced,
+            amountMismatchedTransactions = mismatchedAmounts,
             globalBalance = globalBalance,
             healthy = stuckTransactions.isEmpty()
                     && missingEntries.isEmpty()
                     && unbalanced.isEmpty()
+                    && mismatchedAmounts.isEmpty()
                     && globalBalance.balanced
         )
     }
@@ -102,6 +126,7 @@ data class ReconciliationReport(
     val stuckTransactions: List<UUID>,
     val transactionsWithoutLedgerEntries: List<UUID>,
     val unbalancedTransactions: List<UUID>,
+    val amountMismatchedTransactions: List<UUID>,
     val globalBalance: GlobalBalanceResult,
     val healthy: Boolean
 )

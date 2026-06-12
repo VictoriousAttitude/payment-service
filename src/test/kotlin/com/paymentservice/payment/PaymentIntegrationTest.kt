@@ -5,13 +5,17 @@ import com.paymentservice.ledger.AccountType
 import com.paymentservice.ledger.EntryType
 import com.paymentservice.ledger.LedgerRepository
 import com.paymentservice.ledger.LedgerService
+import com.paymentservice.ledger.LedgerEntry
 import com.paymentservice.payment.dto.CreatePaymentRequest
 import com.paymentservice.reconciliation.ReconciliationService
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
+import org.springframework.dao.OptimisticLockingFailureException
 import java.util.UUID
+import java.util.concurrent.CyclicBarrier
+import java.util.concurrent.Executors
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -165,7 +169,75 @@ class PaymentIntegrationTest {
         }
     }
 
+    // ─── Concurrency: optimistic locking ────────────────────────────
+
+    @Test
+    fun `concurrent capture - exactly one succeeds, ledger entries not duplicated`() {
+        val key = "concurrent-capture-${UUID.randomUUID()}"
+        val txn = paymentService.createPayment(createRequest(), key)
+        paymentService.handleProviderCallback(txn.id, authorized = true, providerReference = "ref")
+
+        val barrier = CyclicBarrier(2)
+        val executor = Executors.newFixedThreadPool(2)
+        val outcomes = (1..2).map {
+            executor.submit<Throwable?> {
+                barrier.await()
+                try {
+                    paymentService.capturePayment(txn.id)
+                    null
+                } catch (e: Throwable) {
+                    e
+                }
+            }
+        }.map { it.get() }
+        executor.shutdown()
+
+        // exactly one capture must fail: either optimistic lock conflict
+        // (true race) or state guard (loser read after winner committed)
+        val failures = outcomes.filterNotNull()
+        assertEquals(1, failures.size, "exactly one capture must fail, got: $outcomes")
+        val failure = failures.single()
+        assertTrue(
+            failure is OptimisticLockingFailureException || failure is InvalidStateTransitionException,
+            "unexpected failure type: $failure"
+        )
+
+        // the critical invariant: money was not duplicated
+        assertEquals(PaymentStatus.CAPTURED, paymentService.getPayment(txn.id).status)
+        assertEquals(3, ledgerService.getEntriesForTransaction(txn.id).size)
+    }
+
     // ─── Layer 3 (Guard): reconciliation ────────────────────────────
+
+    @Test
+    fun `reconciliation detects duplicated balanced entry set via amount mismatch`() {
+        val key = "dup-entries-${UUID.randomUUID()}"
+        val txn = paymentService.createPayment(createRequest(), key)
+        paymentService.handleProviderCallback(txn.id, authorized = true, providerReference = "ref")
+        paymentService.capturePayment(txn.id)
+
+        // simulate the double-capture bug: a second balanced capture entry set
+        val duplicates = ledgerService.getEntriesForTransaction(txn.id).map {
+            LedgerEntry(
+                transactionId = it.transactionId,
+                accountType = it.accountType,
+                accountId = it.accountId,
+                entryType = it.entryType,
+                amount = it.amount,
+                currency = it.currency,
+                description = "duplicate"
+            )
+        }
+        ledgerRepository.saveAll(duplicates)
+
+        // debit==credit checks are blind: the duplicate set balances
+        assertFalse(txn.id in reconciliationService.findUnbalancedTransactions())
+        assertTrue(reconciliationService.verifyGlobalLedgerBalance().balanced)
+
+        // amount check catches it: debits sum to 2x transaction amount
+        assertTrue(txn.id in reconciliationService.findTransactionsWithMismatchedAmounts())
+    }
+
 
     @Test
     fun `reconciliation reports healthy after valid lifecycle`() {

@@ -5,6 +5,7 @@ import com.paymentservice.payment.InvalidStateTransitionException
 import com.paymentservice.payment.MerchantNotActiveException
 import com.paymentservice.payment.MerchantNotFoundException
 import com.paymentservice.payment.TransactionNotFoundException
+import org.springframework.dao.OptimisticLockingFailureException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.MethodArgumentNotValidException
@@ -50,6 +51,16 @@ class GlobalExceptionHandler {
     fun handleLedgerImbalance(e: LedgerImbalanceException): ResponseEntity<ErrorResponse> {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
             ErrorResponse("LEDGER_IMBALANCE", e.message ?: "Ledger entries do not balance")
+        )
+    }
+
+    @ExceptionHandler(OptimisticLockingFailureException::class)
+    fun handleOptimisticLock(e: OptimisticLockingFailureException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(
+            ErrorResponse(
+                "CONCURRENT_MODIFICATION",
+                "Transaction was modified concurrently; retry with current state"
+            )
         )
     }
 
