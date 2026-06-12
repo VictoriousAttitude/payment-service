@@ -2,13 +2,13 @@
 
 A payment processing service implementing the 3-layer safety model inspired by [Stripe's money movement validation architecture](https://stripe.com/blog/payment-api-design).
 
-Built with Kotlin, Spring Boot 3, PostgreSQL — focused on financial correctness, not feature breadth.
+Built with Kotlin, Spring Boot 3, PostgreSQL — focused on financial correctness, not feature breadth. It's not a blueprint. I am just providing my thinking process here.
 
 ## architecture
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│                    API layer                          │
+│                    API layer                         │
 │  POST /payments  POST /capture  POST /refund  GET /  │
 └──────────────────────┬───────────────────────────────┘
                        │
