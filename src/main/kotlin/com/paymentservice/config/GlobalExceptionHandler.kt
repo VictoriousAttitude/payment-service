@@ -1,6 +1,7 @@
 package com.paymentservice.config
 
 import com.paymentservice.ledger.LedgerImbalanceException
+import com.paymentservice.payment.IdempotencyKeyReuseException
 import com.paymentservice.payment.InvalidStateTransitionException
 import com.paymentservice.payment.MerchantNotActiveException
 import com.paymentservice.payment.MerchantNotFoundException
@@ -51,6 +52,15 @@ class GlobalExceptionHandler {
     fun handleLedgerImbalance(e: LedgerImbalanceException): ResponseEntity<ErrorResponse> {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
             ErrorResponse("LEDGER_IMBALANCE", e.message ?: "Ledger entries do not balance")
+        )
+    }
+
+    // 422 per IETF httpapi idempotency-key-header draft: key reuse with a
+    // different payload is unprocessable, not a successful replay
+    @ExceptionHandler(IdempotencyKeyReuseException::class)
+    fun handleIdempotencyKeyReuse(e: IdempotencyKeyReuseException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(
+            ErrorResponse("IDEMPOTENCY_KEY_REUSE", e.message ?: "Idempotency key reused with a different payload")
         )
     }
 

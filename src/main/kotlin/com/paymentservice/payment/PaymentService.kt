@@ -4,8 +4,10 @@ import com.paymentservice.ledger.LedgerService
 import com.paymentservice.merchant.MerchantRepository
 import com.paymentservice.merchant.MerchantStatus
 import com.paymentservice.payment.dto.CreatePaymentRequest
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.security.MessageDigest
 import java.util.UUID
 
 @Service
@@ -16,16 +18,22 @@ class PaymentService(
 ) {
 
     /**
-     * Layer 1 (Gate): idempotency check — duplicate key returns existing transaction.
-     * Layer 2 (Core): creates transaction with validated state.
+     * Layer 1 (Gate): idempotency.
+     * - Replayed key with identical payload returns the existing transaction.
+     * - Replayed key with a different payload is rejected (client bug, not a retry).
+     * - Concurrent requests with the same key race on the DB unique constraint;
+     *   the loser catches the violation and returns the winner's row.
+     *
+     * Deliberately NOT @Transactional: after a unique violation the surrounding
+     * DB transaction would be aborted and the recovery re-fetch impossible.
+     * The single write (save) is atomic on its own.
      */
-    @Transactional
-    fun createPayment(request: CreatePaymentRequest, idempotencyKey: String): Transaction {
-        // Gate: check idempotency
-        val existing = transactionRepository.findByMerchantIdAndIdempotencyKey(
-            request.merchantId, idempotencyKey
-        )
-        if (existing != null) return existing
+    fun createPayment(request: CreatePaymentRequest, idempotencyKey: String): PaymentResult {
+        val requestHash = fingerprint(request)
+
+        // Gate: replay check
+        transactionRepository.findByMerchantIdAndIdempotencyKey(request.merchantId, idempotencyKey)
+            ?.let { return replayed(it, requestHash, idempotencyKey) }
 
         // Validate merchant exists and is active
         val merchant = merchantRepository.findById(request.merchantId)
@@ -35,10 +43,10 @@ class PaymentService(
             throw MerchantNotActiveException(merchant.id)
         }
 
-        // Create transaction
         val transaction = Transaction(
             merchantId = merchant.id,
             idempotencyKey = idempotencyKey,
+            requestHash = requestHash,
             amount = request.amount,
             currency = request.currency.uppercase(),
             description = request.description,
@@ -48,7 +56,37 @@ class PaymentService(
         // Transition CREATED → PENDING (sent to provider)
         transaction.transitionTo(PaymentStatus.PENDING)
 
-        return transactionRepository.save(transaction)
+        return try {
+            PaymentResult(transactionRepository.save(transaction), created = true)
+        } catch (e: DataIntegrityViolationException) {
+            // Lost the race: a concurrent request with the same key committed first.
+            // The unique constraint is the ultimate gate; return the winner's row.
+            val winner = transactionRepository.findByMerchantIdAndIdempotencyKey(
+                request.merchantId, idempotencyKey
+            ) ?: throw e // violation was not the idempotency constraint
+            replayed(winner, requestHash, idempotencyKey)
+        }
+    }
+
+    private fun replayed(existing: Transaction, requestHash: String, idempotencyKey: String): PaymentResult {
+        // Empty stored hash = pre-fingerprint row; skip the payload check
+        if (existing.requestHash.isNotEmpty() && existing.requestHash != requestHash) {
+            throw IdempotencyKeyReuseException(idempotencyKey)
+        }
+        return PaymentResult(existing, created = false)
+    }
+
+    private fun fingerprint(request: CreatePaymentRequest): String {
+        val canonical = listOf(
+            request.merchantId,
+            request.amount,
+            request.currency.uppercase(),
+            request.description,
+            request.paymentMethod
+        ).joinToString("|")
+        return MessageDigest.getInstance("SHA-256")
+            .digest(canonical.toByteArray())
+            .joinToString("") { "%02x".format(it) }
     }
 
     /**
@@ -125,6 +163,16 @@ class PaymentService(
     }
 }
 
+/**
+ * Result of payment creation: [created] distinguishes a new transaction from
+ * an idempotent replay, so callers fire side effects (provider dispatch,
+ * 201 vs 200) exactly once.
+ */
+data class PaymentResult(
+    val transaction: Transaction,
+    val created: Boolean
+)
+
 // Domain exceptions
 class MerchantNotFoundException(val merchantId: UUID) :
     RuntimeException("Merchant not found: $merchantId")
@@ -134,3 +182,6 @@ class MerchantNotActiveException(val merchantId: UUID) :
 
 class TransactionNotFoundException(val transactionId: UUID) :
     RuntimeException("Transaction not found: $transactionId")
+
+class IdempotencyKeyReuseException(val idempotencyKey: String) :
+    RuntimeException("Idempotency key reused with a different payload: $idempotencyKey")

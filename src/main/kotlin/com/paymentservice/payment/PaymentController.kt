@@ -20,15 +20,16 @@ class PaymentController(
         @RequestHeader("Idempotency-Key") idempotencyKey: String,
         @Valid @RequestBody request: CreatePaymentRequest
     ): ResponseEntity<PaymentResponse> {
-        val transaction = paymentService.createPayment(request, idempotencyKey)
+        val result = paymentService.createPayment(request, idempotencyKey)
 
-        // Trigger async provider simulation (in real system, this would be an external call)
-        providerSimulator.simulateAuthorization(transaction.id)
+        // Provider dispatch only for genuinely new payments — an idempotent
+        // replay must not re-send the payment to the provider
+        if (result.created) {
+            providerSimulator.simulateAuthorization(result.transaction.id)
+        }
 
-        val isNew = transaction.status == PaymentStatus.PENDING
-        val status = if (isNew) HttpStatus.CREATED else HttpStatus.OK
-
-        return ResponseEntity.status(status).body(PaymentResponse.from(transaction))
+        val status = if (result.created) HttpStatus.CREATED else HttpStatus.OK
+        return ResponseEntity.status(status).body(PaymentResponse.from(result.transaction))
     }
 
     @GetMapping("/{id}")

@@ -19,6 +19,14 @@ class Transaction(
     @Column(name = "idempotency_key", nullable = false)
     val idempotencyKey: String,
 
+    /**
+     * SHA-256 of the canonical request payload. Detects idempotency key reuse
+     * with a different payload (client bug, not a retry). Empty for rows
+     * created before fingerprinting was introduced.
+     */
+    @Column(name = "request_hash", nullable = false, length = 64)
+    val requestHash: String = "",
+
     @Column(nullable = false)
     val amount: Long,
 
