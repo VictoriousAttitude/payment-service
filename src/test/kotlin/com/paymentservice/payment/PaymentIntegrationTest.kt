@@ -41,10 +41,10 @@ class PaymentIntegrationTest {
 
     private val merchantId = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11") // seeded in V1
 
-    private fun createRequest(amount: Long = 10_000L) = CreatePaymentRequest(
+    private fun createRequest(amount: Long = 10_000L, currency: String = "EUR") = CreatePaymentRequest(
         merchantId = merchantId,
         amount = amount,
-        currency = "EUR",
+        currency = currency,
         description = "test payment"
     )
 
@@ -52,10 +52,20 @@ class PaymentIntegrationTest {
      * Creates a payment and drains the outbox so it reaches PENDING — the state
      * a payment must be in before the provider callback arrives.
      */
-    private fun createPending(amount: Long = 10_000L, key: String = "k-${UUID.randomUUID()}"): Transaction {
-        val txn = paymentService.createPayment(createRequest(amount), key).transaction
+    private fun createPending(
+        amount: Long = 10_000L,
+        key: String = "k-${UUID.randomUUID()}",
+        currency: String = "EUR"
+    ): Transaction {
+        val txn = paymentService.createPayment(createRequest(amount, currency), key).transaction
         outboxDispatcher.dispatchPending()
         return paymentService.getPayment(txn.id)
+    }
+
+    private fun captureFresh(amount: Long, currency: String): Transaction {
+        val txn = createPending(amount = amount, key = "cur-${UUID.randomUUID()}", currency = currency)
+        paymentService.handleProviderCallback(txn.id, authorized = true, providerReference = "ref-${txn.id}")
+        return paymentService.capturePayment(txn.id)
     }
 
     // ─── Layer 2 (Core): full payment lifecycle ───────────────────────
@@ -94,7 +104,7 @@ class PaymentIntegrationTest {
         assertEquals(200L, platformCredit.amount) // 2% of 10000
 
         // verify merchant balance = 9800
-        val balance = ledgerService.getMerchantBalance(merchantId)
+        val balance = ledgerService.getMerchantBalance(merchantId, "EUR")
         assertTrue(balance > 0)
     }
 
@@ -106,7 +116,7 @@ class PaymentIntegrationTest {
         paymentService.handleProviderCallback(txn.id, authorized = true, providerReference = "prov_ref")
         paymentService.capturePayment(txn.id)
 
-        val balanceBefore = ledgerService.getMerchantBalance(merchantId)
+        val balanceBefore = ledgerService.getMerchantBalance(merchantId, "EUR")
 
         // refund reverses the ledger
         val refunded = paymentService.refundPayment(txn.id)
@@ -117,7 +127,7 @@ class PaymentIntegrationTest {
         assertEquals(6, entries.size)
 
         // merchant balance decreased by the original net amount
-        val balanceAfter = ledgerService.getMerchantBalance(merchantId)
+        val balanceAfter = ledgerService.getMerchantBalance(merchantId, "EUR")
         assertEquals(balanceBefore - 9_800L, balanceAfter)
     }
 
@@ -322,7 +332,32 @@ class PaymentIntegrationTest {
         paymentService.refundPayment(refundTxn.id)
 
         val balance = reconciliationService.verifyGlobalLedgerBalance()
-        assertTrue(balance.balanced, "debits=${balance.totalDebits} credits=${balance.totalCredits}")
+        assertTrue(balance.balanced, "per-currency balance: ${balance.byCurrency}")
+    }
+
+    @Test
+    fun `balances are scoped per currency - EUR and USD never commingle`() {
+        // shared test DB accumulates balances, so assert per-currency deltas
+        val eurBefore = ledgerService.getMerchantBalance(merchantId, "EUR")
+        val usdBefore = ledgerService.getMerchantBalance(merchantId, "USD")
+
+        captureFresh(amount = 10_000L, currency = "EUR")
+        captureFresh(amount = 7_000L, currency = "USD")
+
+        // each currency moved only by its own capture net (amount - 2% fee)
+        assertEquals(eurBefore + 9_800L, ledgerService.getMerchantBalance(merchantId, "EUR"))
+        assertEquals(usdBefore + 6_860L, ledgerService.getMerchantBalance(merchantId, "USD"))
+
+        // getMerchantBalances exposes both, never summed into one number
+        val byCurrency = ledgerService.getMerchantBalances(merchantId).associateBy { it.currency }
+        assertEquals(eurBefore + 9_800L, byCurrency.getValue("EUR").net)
+        assertEquals(usdBefore + 6_860L, byCurrency.getValue("USD").net)
+
+        // global health is verified within each currency, both balanced
+        val global = reconciliationService.verifyGlobalLedgerBalance()
+        assertTrue(global.balanced)
+        assertTrue(global.byCurrency.any { it.currency == "EUR" })
+        assertTrue(global.byCurrency.any { it.currency == "USD" })
     }
 
     // ─── Edge cases ─────────────────────────────────────────────────

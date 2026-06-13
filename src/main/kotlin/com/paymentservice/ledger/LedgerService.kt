@@ -93,8 +93,12 @@ class LedgerService(
         ledgerRepository.saveAll(entries)
     }
 
-    fun getMerchantBalance(merchantId: UUID): Long {
-        return ledgerRepository.computeBalance(AccountType.MERCHANT, merchantId)
+    fun getMerchantBalance(merchantId: UUID, currency: String): Long {
+        return ledgerRepository.computeBalance(AccountType.MERCHANT, merchantId, currency.uppercase())
+    }
+
+    fun getMerchantBalances(merchantId: UUID): List<CurrencyBalance> {
+        return ledgerRepository.computeBalancesByCurrency(AccountType.MERCHANT, merchantId)
     }
 
     fun getEntriesForTransaction(transactionId: UUID): List<LedgerEntry> {

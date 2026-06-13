@@ -1,5 +1,6 @@
 package com.paymentservice.reconciliation
 
+import com.paymentservice.ledger.CurrencyBalance
 import com.paymentservice.ledger.EntryType
 import com.paymentservice.ledger.LedgerRepository
 import com.paymentservice.payment.PaymentStatus
@@ -78,17 +79,14 @@ class ReconciliationService(
     }
 
     /**
-     * Global system health: do all debits equal all credits across the entire ledger?
-     * If false, money has appeared from nowhere or disappeared. Red alert.
+     * Global system health: within every currency, do all debits equal all
+     * credits? Checked per-currency because the invariant is per-currency — a
+     * cross-currency SUM could net a EUR shortfall against a USD surplus and
+     * falsely report "balanced". If any currency is off, money has appeared
+     * from nowhere or disappeared. Red alert.
      */
     fun verifyGlobalLedgerBalance(): GlobalBalanceResult {
-        val totalDebits = ledgerRepository.sumAllDebits()
-        val totalCredits = ledgerRepository.sumAllCredits()
-        return GlobalBalanceResult(
-            totalDebits = totalDebits,
-            totalCredits = totalCredits,
-            balanced = totalDebits == totalCredits
-        )
+        return GlobalBalanceResult(byCurrency = ledgerRepository.sumByCurrency())
     }
 
     /**
@@ -117,10 +115,10 @@ class ReconciliationService(
 }
 
 data class GlobalBalanceResult(
-    val totalDebits: Long,
-    val totalCredits: Long,
-    val balanced: Boolean
-)
+    val byCurrency: List<CurrencyBalance>
+) {
+    val balanced: Boolean get() = byCurrency.all { it.balanced }
+}
 
 data class ReconciliationReport(
     val stuckTransactions: List<UUID>,

@@ -8,25 +8,48 @@ interface LedgerRepository : JpaRepository<LedgerEntry, UUID> {
 
     fun findByTransactionId(transactionId: UUID): List<LedgerEntry>
 
+    /**
+     * Net balance (credits - debits) for an account in a single currency.
+     * Currency is part of the key: summing across currencies would add cents of
+     * different denominations into a meaningless number.
+     */
     @Query("""
         SELECT COALESCE(SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE 0 END), 0) -
                COALESCE(SUM(CASE WHEN le.entryType = 'DEBIT' THEN le.amount ELSE 0 END), 0)
         FROM LedgerEntry le
+        WHERE le.accountType = :accountType AND le.accountId = :accountId AND le.currency = :currency
+    """)
+    fun computeBalance(accountType: AccountType, accountId: UUID, currency: String): Long
+
+    /**
+     * Per-currency debit/credit totals for one account, one row per currency.
+     */
+    @Query("""
+        SELECT new com.paymentservice.ledger.CurrencyBalance(
+            le.currency,
+            SUM(CASE WHEN le.entryType = 'DEBIT' THEN le.amount ELSE 0 END),
+            SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE 0 END))
+        FROM LedgerEntry le
         WHERE le.accountType = :accountType AND le.accountId = :accountId
+        GROUP BY le.currency
     """)
-    fun computeBalance(accountType: AccountType, accountId: UUID): Long
+    fun computeBalancesByCurrency(accountType: AccountType, accountId: UUID): List<CurrencyBalance>
 
+    /**
+     * Per-currency debit/credit totals across the whole ledger. The global
+     * balance invariant (debits == credits) only holds within a currency;
+     * a single cross-currency SUM could net a EUR shortfall against a USD
+     * surplus and falsely report "balanced".
+     */
     @Query("""
-        SELECT COALESCE(SUM(CASE WHEN le.entryType = 'DEBIT' THEN le.amount ELSE 0 END), 0)
+        SELECT new com.paymentservice.ledger.CurrencyBalance(
+            le.currency,
+            SUM(CASE WHEN le.entryType = 'DEBIT' THEN le.amount ELSE 0 END),
+            SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE 0 END))
         FROM LedgerEntry le
+        GROUP BY le.currency
     """)
-    fun sumAllDebits(): Long
-
-    @Query("""
-        SELECT COALESCE(SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE 0 END), 0)
-        FROM LedgerEntry le
-    """)
-    fun sumAllCredits(): Long
+    fun sumByCurrency(): List<CurrencyBalance>
 
     @Query("""
         SELECT le.transactionId FROM LedgerEntry le
@@ -35,4 +58,17 @@ interface LedgerRepository : JpaRepository<LedgerEntry, UUID> {
                SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE 0 END)
     """)
     fun findUnbalancedTransactions(): List<UUID>
+}
+
+/**
+ * Debit/credit totals for a single currency. `net` is the account-balance view
+ * (credits - debits); `balanced` is the ledger-invariant view (debits == credits).
+ */
+data class CurrencyBalance(
+    val currency: String,
+    val totalDebits: Long,
+    val totalCredits: Long
+) {
+    val net: Long get() = totalCredits - totalDebits
+    val balanced: Boolean get() = totalDebits == totalCredits
 }
