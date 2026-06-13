@@ -40,7 +40,10 @@ class OutboxEvent(
     var updatedAt: Instant = Instant.now(),
 
     @Column(name = "dispatched_at")
-    var dispatchedAt: Instant? = null
+    var dispatchedAt: Instant? = null,
+
+    @Column(name = "next_attempt_at", nullable = false)
+    var nextAttemptAt: Instant = Instant.now()
 ) {
     fun markDispatched() {
         status = OutboxStatus.DISPATCHED
@@ -48,17 +51,30 @@ class OutboxEvent(
         updatedAt = Instant.now()
     }
 
+    /**
+     * Records a dispatch failure and pushes the event into the future with
+     * exponential backoff, so a failing event stops hot-looping the provider on
+     * every tick (next_attempt_at gates re-selection). At maxAttempts it is
+     * dead-lettered to FAILED and never re-selected.
+     */
     fun recordFailure(error: String, maxAttempts: Int) {
         attempts++
         lastError = error.take(1000)
         updatedAt = Instant.now()
         if (attempts >= maxAttempts) {
             status = OutboxStatus.FAILED
+        } else {
+            nextAttemptAt = Instant.now().plusSeconds(backoffSeconds())
         }
     }
 
+    private fun backoffSeconds(): Long =
+        minOf(BASE_BACKOFF_SECONDS shl (attempts - 1), MAX_BACKOFF_SECONDS)
+
     companion object {
         const val PROVIDER_AUTHORIZATION = "PROVIDER_AUTHORIZATION"
+        private const val BASE_BACKOFF_SECONDS = 30L
+        private const val MAX_BACKOFF_SECONDS = 3600L
     }
 }
 

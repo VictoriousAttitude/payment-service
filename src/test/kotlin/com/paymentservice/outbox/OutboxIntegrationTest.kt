@@ -10,9 +10,14 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
 import org.springframework.test.context.ActiveProfiles
 import java.util.UUID
+import java.util.concurrent.CyclicBarrier
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+import kotlin.test.assertFalse
 
 /**
  * Exercises the transactional outbox: create writes a PENDING event alongside a
@@ -27,6 +32,7 @@ class OutboxIntegrationTest {
     @Autowired lateinit var paymentService: PaymentService
     @Autowired lateinit var outboxRepository: OutboxEventRepository
     @Autowired lateinit var outboxDispatcher: OutboxDispatcher
+    @Autowired lateinit var outboxProcessor: OutboxProcessor
 
     private val merchantId = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11") // seeded in V1
 
@@ -76,5 +82,56 @@ class OutboxIntegrationTest {
         assertEquals(OutboxStatus.DISPATCHED, event.status)
         assertEquals(firstDispatchedAt, event.dispatchedAt)
         assertEquals(PaymentStatus.PENDING, paymentService.getPayment(txn.id).status)
+    }
+
+    @Test
+    fun `concurrent dispatch of the same event - SKIP LOCKED yields exactly one winner`() {
+        val txn = paymentService.createPayment(createRequest(), "outbox-${UUID.randomUUID()}").transaction
+        val eventId = outboxRepository.findByAggregateId(txn.id).single().id
+
+        val barrier = CyclicBarrier(2)
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val tasks = (1..2).map {
+                pool.submit<UUID?> {
+                    barrier.await(5, TimeUnit.SECONDS)
+                    outboxProcessor.dispatch(eventId)
+                }
+            }
+            val results = tasks.map { it.get(10, TimeUnit.SECONDS) }
+
+            // exactly one transaction claimed the row; the other was skipped (null)
+            assertEquals(1, results.count { it != null })
+            assertEquals(1, results.count { it == null })
+        } finally {
+            pool.shutdownNow()
+        }
+
+        val event = outboxRepository.findByAggregateId(txn.id).single()
+        assertEquals(OutboxStatus.DISPATCHED, event.status)
+        assertEquals(PaymentStatus.PENDING, paymentService.getPayment(txn.id).status)
+    }
+
+    @Test
+    fun `recordFailure backs off then dead-letters at max attempts`() {
+        val txn = paymentService.createPayment(createRequest(), "outbox-${UUID.randomUUID()}").transaction
+        val eventId = outboxRepository.findByAggregateId(txn.id).single().id
+
+        // first failure: still PENDING, pushed into the future, not yet dispatchable
+        outboxProcessor.recordFailure(eventId, "provider timeout")
+        val afterFirst = outboxRepository.findById(eventId).get()
+        assertEquals(OutboxStatus.PENDING, afterFirst.status)
+        assertEquals(1, afterFirst.attempts)
+        assertTrue(afterFirst.nextAttemptAt.isAfter(java.time.Instant.now()))
+        assertFalse(outboxRepository.findDispatchable(100).any { it.id == eventId })
+
+        // drive to the dead-letter threshold
+        repeat(OutboxProcessor.MAX_ATTEMPTS - 1) {
+            outboxProcessor.recordFailure(eventId, "provider timeout")
+        }
+        val dead = outboxRepository.findById(eventId).get()
+        assertEquals(OutboxStatus.FAILED, dead.status)
+        assertEquals(OutboxProcessor.MAX_ATTEMPTS, dead.attempts)
+        assertFalse(outboxRepository.findDispatchable(100).any { it.id == eventId })
     }
 }

@@ -2,7 +2,6 @@ package com.paymentservice.outbox
 
 import com.paymentservice.payment.PaymentProviderSimulator
 import org.slf4j.LoggerFactory
-import org.springframework.data.domain.PageRequest
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 
@@ -31,9 +30,7 @@ class OutboxDispatcher(
         initialDelayString = "\${payment.outbox.initial-delay-ms:5000}"
     )
     fun dispatchPending() {
-        val batch = outboxRepository.findByStatusOrderByCreatedAtAsc(
-            OutboxStatus.PENDING, PageRequest.of(0, BATCH_SIZE)
-        )
+        val batch = outboxRepository.findDispatchable(BATCH_SIZE)
         for (event in batch) {
             try {
                 val transactionId = outboxProcessor.dispatch(event.id) ?: continue

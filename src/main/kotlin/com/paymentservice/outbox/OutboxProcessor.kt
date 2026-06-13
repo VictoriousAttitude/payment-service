@@ -26,8 +26,10 @@ class OutboxProcessor(
      */
     @Transactional
     fun dispatch(eventId: UUID): UUID? {
-        val event = outboxRepository.findById(eventId).orElse(null) ?: return null
-        if (event.status != OutboxStatus.PENDING) return null
+        // SKIP LOCKED claim: null means another instance holds the row (or it
+        // already left PENDING). The lock persists for this transaction, so the
+        // event cannot be double-dispatched while we transition the payment.
+        val event = outboxRepository.lockPendingById(eventId) ?: return null
 
         val transaction = transactionRepository.findById(event.aggregateId)
             .orElseThrow { TransactionNotFoundException(event.aggregateId) }
