@@ -13,11 +13,24 @@ class LedgerService(
     companion object {
         const val PLATFORM_FEE_BPS = 200L // 2.00% in basis points (1 bp = 0.01%)
         val PLATFORM_ACCOUNT_ID: UUID = UUID.fromString("00000000-0000-0000-0000-000000000001")
+
+        /**
+         * Platform fee in the minor unit, floored. Rounding is deliberate and in
+         * the merchant's favor: the fractional minor unit is never charged, it
+         * stays with the merchant via merchantAmount = amount - fee. Two
+         * consequences we rely on:
+         *  - the platform never over-collects on a fractional cent;
+         *  - the entry set always balances exactly (no residual to reconcile),
+         *    because the merchant leg absorbs the truncated remainder.
+         * floorDiv (not `/`) states the direction explicitly; amounts are
+         * non-negative so the two agree, but the intent must not be implicit.
+         */
+        fun platformFee(amount: Long): Long = Math.floorDiv(amount * PLATFORM_FEE_BPS, 10_000)
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
     fun createCaptureEntries(transactionId: UUID, merchantId: UUID, amount: Long, currency: String) {
-        val fee = amount * PLATFORM_FEE_BPS / 10_000
+        val fee = platformFee(amount)
         val merchantAmount = amount - fee
 
         val entries = listOf(
@@ -56,7 +69,7 @@ class LedgerService(
 
     @Transactional(propagation = Propagation.MANDATORY)
     fun createRefundEntries(transactionId: UUID, merchantId: UUID, amount: Long, currency: String) {
-        val fee = amount * PLATFORM_FEE_BPS / 10_000
+        val fee = platformFee(amount)
         val merchantAmount = amount - fee
 
         val entries = listOf(
