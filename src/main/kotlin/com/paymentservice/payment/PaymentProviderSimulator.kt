@@ -39,7 +39,7 @@ class PaymentProviderSimulator(
             val body = objectMapper.writeValueAsString(
                 ProviderCallbackRequest(transactionId, authorized, providerRef)
             )
-            val signature = webhookSigner.sign(body)
+            val signature = webhookSigner.signedHeader(body)
 
             log.info("Posting provider callback txn=$transactionId authorized=$authorized")
 

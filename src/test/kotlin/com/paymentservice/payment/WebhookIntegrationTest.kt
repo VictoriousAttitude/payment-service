@@ -65,7 +65,7 @@ class WebhookIntegrationTest {
         val txn = newPendingPayment()
         val body = callbackBody(txn.id, authorized = true, ref = "prov_ok")
 
-        val response = post(body, webhookSigner.sign(body))
+        val response = post(body, webhookSigner.signedHeader(body))
 
         assertEquals(HttpStatus.OK, response.statusCode)
         assertEquals(PaymentStatus.AUTHORIZED, paymentService.getPayment(txn.id).status)
@@ -97,13 +97,26 @@ class WebhookIntegrationTest {
     fun `duplicate callback is idempotent - second is acked, no error`() {
         val txn = newPendingPayment()
         val body = callbackBody(txn.id, authorized = true, ref = "prov_dup")
-        val signature = webhookSigner.sign(body)
+        val signature = webhookSigner.signedHeader(body)
 
         assertEquals(HttpStatus.OK, post(body, signature).statusCode)
         // provider retried the exact same callback
         assertEquals(HttpStatus.OK, post(body, signature).statusCode)
 
         assertEquals(PaymentStatus.AUTHORIZED, paymentService.getPayment(txn.id).status)
+    }
+
+    @Test
+    fun `replayed callback with a stale timestamp is rejected`() {
+        val txn = newPendingPayment()
+        val body = callbackBody(txn.id, authorized = true, ref = "prov_replay")
+        // correctly signed by the provider, but captured and replayed an hour later
+        val staleSignature = webhookSigner.signedHeader(body, java.time.Instant.now().minusSeconds(3600))
+
+        val response = post(body, staleSignature)
+
+        assertEquals(HttpStatus.UNAUTHORIZED, response.statusCode)
+        assertEquals(PaymentStatus.PENDING, paymentService.getPayment(txn.id).status)
     }
 
     @Test
@@ -114,7 +127,7 @@ class WebhookIntegrationTest {
 
         // provider re-delivers the authorization long after we captured
         val body = callbackBody(txn.id, authorized = true, ref = "prov_cap")
-        val response = post(body, webhookSigner.sign(body))
+        val response = post(body, webhookSigner.signedHeader(body))
 
         // 200 (acked) so the provider stops retrying; state unchanged
         assertEquals(HttpStatus.OK, response.statusCode)

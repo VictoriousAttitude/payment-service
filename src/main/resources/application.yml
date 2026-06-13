@@ -28,6 +28,8 @@ payment:
     secret: ${WEBHOOK_SECRET:dev-webhook-secret-change-me}
     # Where the simulator (standing in for the provider) posts callbacks.
     callback-url: ${WEBHOOK_CALLBACK_URL:http://localhost:8080/api/v1/webhooks/provider-callback}
+    # Max age (seconds) of a signed callback before it's rejected as a replay.
+    tolerance-seconds: ${WEBHOOK_TOLERANCE_SECONDS:300}
   outbox:
     # How often the dispatcher drains PENDING events, and the delay before the
     # first run after startup.
