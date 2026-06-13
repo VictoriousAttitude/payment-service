@@ -23,6 +23,19 @@ interface TransactionRepository : JpaRepository<Transaction, UUID> {
     """)
     fun findStuckTransactions(statuses: Collection<PaymentStatus>, before: Instant): List<Transaction>
 
+    /**
+     * Captured transactions due for settlement: oldest first, past the settlement
+     * delay. updatedAt is the capture time for a CAPTURED row — capture was its
+     * last write — so it doubles as the settlement clock.
+     */
+    @Query("""
+        SELECT t FROM Transaction t
+        WHERE t.status = com.paymentservice.payment.PaymentStatus.CAPTURED
+        AND t.updatedAt <= :cutoff
+        ORDER BY t.updatedAt ASC
+    """)
+    fun findSettlable(cutoff: Instant, pageable: Pageable): List<Transaction>
+
     // NOT EXISTS, not NOT IN: a NULL transactionId in the subquery would make
     // NOT IN evaluate to UNKNOWN and silently return zero rows, masking the very
     // data-integrity gaps this query exists to find.

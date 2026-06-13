@@ -60,6 +60,12 @@ payment:
     initial-delay-ms: ${RECONCILIATION_INITIAL_DELAY_MS:60000}
     # A transaction sitting in a non-terminal state past this is flagged stuck.
     stuck-threshold-minutes: ${RECONCILIATION_STUCK_THRESHOLD_MINUTES:30}
+  settlement:
+    # How often the settlement batch runs and its startup delay. A capture is
+    # settled once it is older than delay-minutes (T+1 default).
+    interval-ms: ${SETTLEMENT_INTERVAL_MS:300000}
+    initial-delay-ms: ${SETTLEMENT_INITIAL_DELAY_MS:30000}
+    delay-minutes: ${SETTLEMENT_DELAY_MINUTES:1440}
 
 springdoc:
   swagger-ui:

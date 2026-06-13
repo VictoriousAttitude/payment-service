@@ -10,6 +10,12 @@ payment:
     # an unrelated sweep can't log alerts against shared accumulated state.
     interval-ms: 3600000
     initial-delay-ms: 3600000
+  settlement:
+    # Park the scheduled batch; the test drives settleEligible() directly.
+    # delay-minutes 0 makes a just-captured transaction immediately settlable.
+    interval-ms: 3600000
+    initial-delay-ms: 3600000
+    delay-minutes: 0
   webhook:
     # Unreachable: the simulated provider's async callback fails fast and never
     # mutates state behind the test's back. Tests post signed callbacks directly.
