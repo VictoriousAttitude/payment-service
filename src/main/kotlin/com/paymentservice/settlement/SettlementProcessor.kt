@@ -1,6 +1,8 @@
 package com.paymentservice.settlement
 
 import com.paymentservice.payment.PaymentStatus
+import com.paymentservice.payment.TransactionEvent
+import com.paymentservice.payment.TransactionEventRepository
 import com.paymentservice.payment.TransactionRepository
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
@@ -19,7 +21,8 @@ import java.util.UUID
  */
 @Component
 class SettlementProcessor(
-    private val transactionRepository: TransactionRepository
+    private val transactionRepository: TransactionRepository,
+    private val transactionEventRepository: TransactionEventRepository
 ) {
 
     /**
@@ -35,6 +38,13 @@ class SettlementProcessor(
 
         transaction.transitionTo(PaymentStatus.SETTLED)
         transactionRepository.save(transaction)
+        transactionEventRepository.save(
+            TransactionEvent(
+                transactionId = transaction.id,
+                fromStatus = PaymentStatus.CAPTURED,
+                toStatus = PaymentStatus.SETTLED
+            )
+        )
         return transaction.currency
     }
 }

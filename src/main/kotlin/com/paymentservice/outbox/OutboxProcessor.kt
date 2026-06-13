@@ -1,6 +1,8 @@
 package com.paymentservice.outbox
 
 import com.paymentservice.payment.PaymentStatus
+import com.paymentservice.payment.TransactionEvent
+import com.paymentservice.payment.TransactionEventRepository
 import com.paymentservice.payment.TransactionNotFoundException
 import com.paymentservice.payment.TransactionRepository
 import org.springframework.stereotype.Component
@@ -15,7 +17,8 @@ import java.util.UUID
 @Component
 class OutboxProcessor(
     private val outboxRepository: OutboxEventRepository,
-    private val transactionRepository: TransactionRepository
+    private val transactionRepository: TransactionRepository,
+    private val transactionEventRepository: TransactionEventRepository
 ) {
 
     /**
@@ -37,6 +40,13 @@ class OutboxProcessor(
         if (transaction.status == PaymentStatus.CREATED) {
             transaction.transitionTo(PaymentStatus.PENDING)
             transactionRepository.save(transaction)
+            transactionEventRepository.save(
+                TransactionEvent(
+                    transactionId = transaction.id,
+                    fromStatus = PaymentStatus.CREATED,
+                    toStatus = PaymentStatus.PENDING
+                )
+            )
         }
 
         event.markDispatched()

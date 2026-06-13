@@ -19,6 +19,7 @@ class PaymentService(
     private val merchantRepository: MerchantRepository,
     private val ledgerService: LedgerService,
     private val paymentCreator: PaymentCreator,
+    private val transactionEventRepository: TransactionEventRepository,
     private val meterRegistry: MeterRegistry
 ) {
 
@@ -131,6 +132,7 @@ class PaymentService(
             return CallbackOutcome.IGNORED_LATE
         }
 
+        val from = transaction.status
         transaction.transitionTo(target)
         if (authorized) {
             transaction.providerReference = providerReference
@@ -138,6 +140,7 @@ class PaymentService(
             transaction.failureReason = "Provider declined"
         }
         transactionRepository.save(transaction)
+        recordTransition(transaction.id, from, target)
         return CallbackOutcome.APPLIED
     }
 
@@ -152,6 +155,7 @@ class PaymentService(
             val transaction = findTransaction(transactionId)
 
             // State machine validates AUTHORIZED → CAPTURED
+            val from = transaction.status
             transaction.transitionTo(PaymentStatus.CAPTURED)
 
             // Ledger: create double-entry records (validates balance before persist)
@@ -163,6 +167,7 @@ class PaymentService(
             )
 
             val saved = transactionRepository.save(transaction)
+            recordTransition(saved.id, from, PaymentStatus.CAPTURED)
             meterRegistry.counter("payments.captured", "currency", transaction.currency).increment()
             return saved
         }
@@ -178,6 +183,7 @@ class PaymentService(
             val transaction = findTransaction(transactionId)
 
             // State machine validates CAPTURED → REFUNDED
+            val from = transaction.status
             transaction.transitionTo(PaymentStatus.REFUNDED)
 
             // Ledger: create reverse entries (validates balance before persist)
@@ -189,6 +195,7 @@ class PaymentService(
             )
 
             val saved = transactionRepository.save(transaction)
+            recordTransition(saved.id, from, PaymentStatus.REFUNDED)
             meterRegistry.counter("payments.refunded", "currency", transaction.currency).increment()
             return saved
         }
@@ -196,6 +203,16 @@ class PaymentService(
 
     fun getPayment(transactionId: UUID): Transaction {
         return findTransaction(transactionId)
+    }
+
+    fun getHistory(transactionId: UUID): List<TransactionEvent> {
+        return transactionEventRepository.findByTransactionIdOrderByCreatedAtAsc(transactionId)
+    }
+
+    private fun recordTransition(transactionId: UUID, from: PaymentStatus, to: PaymentStatus) {
+        transactionEventRepository.save(
+            TransactionEvent(transactionId = transactionId, fromStatus = from, toStatus = to)
+        )
     }
 
     private fun findTransaction(id: UUID): Transaction {

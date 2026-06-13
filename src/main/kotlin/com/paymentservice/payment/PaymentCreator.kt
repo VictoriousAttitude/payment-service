@@ -21,7 +21,8 @@ import java.util.UUID
 @Component
 class PaymentCreator(
     private val transactionRepository: TransactionRepository,
-    private val outboxRepository: OutboxEventRepository
+    private val outboxRepository: OutboxEventRepository,
+    private val transactionEventRepository: TransactionEventRepository
 ) {
 
     @Transactional
@@ -41,6 +42,15 @@ class PaymentCreator(
                 currency = request.currency.uppercase(),
                 description = request.description,
                 paymentMethod = request.paymentMethod
+            )
+        )
+
+        // Opening history event: no prior state.
+        transactionEventRepository.save(
+            TransactionEvent(
+                transactionId = transaction.id,
+                fromStatus = null,
+                toStatus = transaction.status
             )
         )
 
