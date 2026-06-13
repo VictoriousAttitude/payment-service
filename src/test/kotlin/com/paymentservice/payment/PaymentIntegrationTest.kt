@@ -6,6 +6,7 @@ import com.paymentservice.ledger.EntryType
 import com.paymentservice.ledger.LedgerRepository
 import com.paymentservice.ledger.LedgerService
 import com.paymentservice.ledger.LedgerEntry
+import com.paymentservice.outbox.OutboxDispatcher
 import com.paymentservice.payment.dto.CreatePaymentRequest
 import com.paymentservice.reconciliation.ReconciliationService
 import org.junit.jupiter.api.Test
@@ -13,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
 import org.springframework.dao.OptimisticLockingFailureException
+import org.springframework.test.context.ActiveProfiles
 import java.util.UUID
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.Executors
@@ -27,6 +29,7 @@ import kotlin.test.assertTrue
  */
 @SpringBootTest
 @Import(TestcontainersConfiguration::class)
+@ActiveProfiles("test")
 class PaymentIntegrationTest {
 
     @Autowired lateinit var paymentService: PaymentService
@@ -34,6 +37,7 @@ class PaymentIntegrationTest {
     @Autowired lateinit var ledgerRepository: LedgerRepository
     @Autowired lateinit var transactionRepository: TransactionRepository
     @Autowired lateinit var reconciliationService: ReconciliationService
+    @Autowired lateinit var outboxDispatcher: OutboxDispatcher
 
     private val merchantId = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11") // seeded in V1
 
@@ -44,12 +48,22 @@ class PaymentIntegrationTest {
         description = "test payment"
     )
 
+    /**
+     * Creates a payment and drains the outbox so it reaches PENDING — the state
+     * a payment must be in before the provider callback arrives.
+     */
+    private fun createPending(amount: Long = 10_000L, key: String = "k-${UUID.randomUUID()}"): Transaction {
+        val txn = paymentService.createPayment(createRequest(amount), key).transaction
+        outboxDispatcher.dispatchPending()
+        return paymentService.getPayment(txn.id)
+    }
+
     // ─── Layer 2 (Core): full payment lifecycle ───────────────────────
 
     @Test
     fun `full lifecycle - create, authorize, capture, verify ledger and balance`() {
         val key = "lifecycle-${UUID.randomUUID()}"
-        val txn = paymentService.createPayment(createRequest(), key).transaction
+        val txn = createPending(key = key)
 
         assertEquals(PaymentStatus.PENDING, txn.status)
 
@@ -87,7 +101,7 @@ class PaymentIntegrationTest {
     @Test
     fun `full lifecycle with refund - balance returns to zero`() {
         val key = "refund-${UUID.randomUUID()}"
-        val txn = paymentService.createPayment(createRequest(), key).transaction
+        val txn = createPending(key = key)
 
         paymentService.handleProviderCallback(txn.id, authorized = true, providerReference = "prov_ref")
         paymentService.capturePayment(txn.id)
@@ -167,7 +181,7 @@ class PaymentIntegrationTest {
     @Test
     fun `capture on FAILED payment throws InvalidStateTransitionException`() {
         val key = "fail-capture-${UUID.randomUUID()}"
-        val txn = paymentService.createPayment(createRequest(), key).transaction
+        val txn = createPending(key = key)
 
         // provider declines
         paymentService.handleProviderCallback(txn.id, authorized = false, providerReference = null)
@@ -184,7 +198,7 @@ class PaymentIntegrationTest {
     @Test
     fun `capture on PENDING payment throws - must be AUTHORIZED first`() {
         val key = "pending-capture-${UUID.randomUUID()}"
-        val txn = paymentService.createPayment(createRequest(), key).transaction
+        val txn = createPending(key = key)
 
         assertEquals(PaymentStatus.PENDING, txn.status)
 
@@ -196,7 +210,7 @@ class PaymentIntegrationTest {
     @Test
     fun `double capture throws - already CAPTURED`() {
         val key = "double-capture-${UUID.randomUUID()}"
-        val txn = paymentService.createPayment(createRequest(), key).transaction
+        val txn = createPending(key = key)
         paymentService.handleProviderCallback(txn.id, authorized = true, providerReference = "ref")
         paymentService.capturePayment(txn.id)
 
@@ -211,7 +225,7 @@ class PaymentIntegrationTest {
     @Test
     fun `concurrent capture - exactly one succeeds, ledger entries not duplicated`() {
         val key = "concurrent-capture-${UUID.randomUUID()}"
-        val txn = paymentService.createPayment(createRequest(), key).transaction
+        val txn = createPending(key = key)
         paymentService.handleProviderCallback(txn.id, authorized = true, providerReference = "ref")
 
         val barrier = CyclicBarrier(2)
@@ -249,7 +263,7 @@ class PaymentIntegrationTest {
     @Test
     fun `reconciliation detects duplicated balanced entry set via amount mismatch`() {
         val key = "dup-entries-${UUID.randomUUID()}"
-        val txn = paymentService.createPayment(createRequest(), key).transaction
+        val txn = createPending(key = key)
         paymentService.handleProviderCallback(txn.id, authorized = true, providerReference = "ref")
         paymentService.capturePayment(txn.id)
 
@@ -279,7 +293,7 @@ class PaymentIntegrationTest {
     @Test
     fun `reconciliation reports healthy after valid lifecycle`() {
         val key = "recon-healthy-${UUID.randomUUID()}"
-        val txn = paymentService.createPayment(createRequest(), key).transaction
+        val txn = createPending(key = key)
         paymentService.handleProviderCallback(txn.id, authorized = true, providerReference = "ref")
         paymentService.capturePayment(txn.id)
 
@@ -295,14 +309,14 @@ class PaymentIntegrationTest {
         // capture 3 payments
         repeat(3) { i ->
             val key = "multi-$i-${UUID.randomUUID()}"
-            val txn = paymentService.createPayment(createRequest(amount = 5_000L), key).transaction
+            val txn = createPending(amount = 5_000L, key = key)
             paymentService.handleProviderCallback(txn.id, authorized = true, providerReference = "ref-$i")
             paymentService.capturePayment(txn.id)
         }
 
         // refund 1 payment
         val refundKey = "multi-refund-${UUID.randomUUID()}"
-        val refundTxn = paymentService.createPayment(createRequest(amount = 5_000L), refundKey).transaction
+        val refundTxn = createPending(amount = 5_000L, key = refundKey)
         paymentService.handleProviderCallback(refundTxn.id, authorized = true, providerReference = "ref-r")
         paymentService.capturePayment(refundTxn.id)
         paymentService.refundPayment(refundTxn.id)
@@ -329,7 +343,7 @@ class PaymentIntegrationTest {
     @Test
     fun `provider decline sets failure reason`() {
         val key = "decline-${UUID.randomUUID()}"
-        val txn = paymentService.createPayment(createRequest(), key).transaction
+        val txn = createPending(key = key)
 
         paymentService.handleProviderCallback(txn.id, authorized = false, providerReference = null)
 

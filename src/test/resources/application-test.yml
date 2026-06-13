@@ -1,0 +1,11 @@
+# Test overrides (merged on top of application.yml when the "test" profile is active).
+payment:
+  outbox:
+    # Effectively disable the scheduled dispatcher; tests drain the outbox
+    # explicitly via dispatchPending() for determinism.
+    dispatch-interval-ms: 3600000
+    initial-delay-ms: 3600000
+  webhook:
+    # Unreachable: the simulated provider's async callback fails fast and never
+    # mutates state behind the test's back. Tests post signed callbacks directly.
+    callback-url: http://localhost:1/api/v1/webhooks/provider-callback

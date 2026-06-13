@@ -11,8 +11,7 @@ import java.util.UUID
 @RestController
 @RequestMapping("/api/v1/payments")
 class PaymentController(
-    private val paymentService: PaymentService,
-    private val providerSimulator: PaymentProviderSimulator
+    private val paymentService: PaymentService
 ) {
 
     @PostMapping
@@ -20,13 +19,10 @@ class PaymentController(
         @RequestHeader("Idempotency-Key") idempotencyKey: String,
         @Valid @RequestBody request: CreatePaymentRequest
     ): ResponseEntity<PaymentResponse> {
+        // Provider dispatch is owned by the outbox dispatcher, not fired here —
+        // the create + dispatch intent commit atomically, so a crash can't lose
+        // the provider call.
         val result = paymentService.createPayment(request, idempotencyKey)
-
-        // Provider dispatch only for genuinely new payments — an idempotent
-        // replay must not re-send the payment to the provider
-        if (result.created) {
-            providerSimulator.simulateAuthorization(result.transaction.id)
-        }
 
         val status = if (result.created) HttpStatus.CREATED else HttpStatus.OK
         return ResponseEntity.status(status).body(PaymentResponse.from(result.transaction))

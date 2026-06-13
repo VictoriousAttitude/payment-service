@@ -12,6 +12,8 @@ import org.springframework.http.HttpEntity
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
+import org.springframework.test.context.ActiveProfiles
+import com.paymentservice.outbox.OutboxDispatcher
 import java.util.UUID
 import kotlin.test.assertEquals
 
@@ -21,12 +23,14 @@ import kotlin.test.assertEquals
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(TestcontainersConfiguration::class)
+@ActiveProfiles("test")
 class WebhookIntegrationTest {
 
     @Autowired lateinit var restTemplate: TestRestTemplate
     @Autowired lateinit var webhookSigner: WebhookSigner
     @Autowired lateinit var objectMapper: ObjectMapper
     @Autowired lateinit var paymentService: PaymentService
+    @Autowired lateinit var outboxDispatcher: OutboxDispatcher
 
     private val merchantId = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
     private val url = "/api/v1/webhooks/provider-callback"
@@ -38,7 +42,9 @@ class WebhookIntegrationTest {
             currency = "EUR",
             description = "webhook test"
         )
-        return paymentService.createPayment(request, "webhook-${UUID.randomUUID()}").transaction
+        val txn = paymentService.createPayment(request, "webhook-${UUID.randomUUID()}").transaction
+        outboxDispatcher.dispatchPending() // CREATED -> PENDING
+        return paymentService.getPayment(txn.id)
     }
 
     private fun post(body: String, signature: String?) =

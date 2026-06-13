@@ -15,7 +15,8 @@ import java.util.UUID
 class PaymentService(
     private val transactionRepository: TransactionRepository,
     private val merchantRepository: MerchantRepository,
-    private val ledgerService: LedgerService
+    private val ledgerService: LedgerService,
+    private val paymentCreator: PaymentCreator
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -46,21 +47,11 @@ class PaymentService(
             throw MerchantNotActiveException(merchant.id)
         }
 
-        val transaction = Transaction(
-            merchantId = merchant.id,
-            idempotencyKey = idempotencyKey,
-            requestHash = requestHash,
-            amount = request.amount,
-            currency = request.currency.uppercase(),
-            description = request.description,
-            paymentMethod = request.paymentMethod
-        )
-
-        // Transition CREATED → PENDING (sent to provider)
-        transaction.transitionTo(PaymentStatus.PENDING)
-
         return try {
-            PaymentResult(transactionRepository.save(transaction), created = true)
+            // Persists the transaction (CREATED) and its provider-dispatch outbox
+            // event atomically. The dispatcher transitions it to PENDING.
+            val transaction = paymentCreator.create(merchant.id, idempotencyKey, requestHash, request)
+            PaymentResult(transaction, created = true)
         } catch (e: DataIntegrityViolationException) {
             // Lost the race: a concurrent request with the same key committed first.
             // The unique constraint is the ultimate gate; return the winner's row.
