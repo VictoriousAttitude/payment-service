@@ -5,6 +5,11 @@ payment:
     # explicitly via dispatchPending() for determinism.
     dispatch-interval-ms: 3600000
     initial-delay-ms: 3600000
+  reconciliation:
+    # Park the scheduled reconciliation; the test drives reconcile() directly so
+    # an unrelated sweep can't log alerts against shared accumulated state.
+    interval-ms: 3600000
+    initial-delay-ms: 3600000
   webhook:
     # Unreachable: the simulated provider's async callback fails fast and never
     # mutates state behind the test's back. Tests post signed callbacks directly.

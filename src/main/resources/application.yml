@@ -35,6 +35,14 @@ payment:
     # first run after startup.
     dispatch-interval-ms: 2000
     initial-delay-ms: 5000
+  reconciliation:
+    # How often the full reconciliation suite runs, and the startup delay before
+    # the first sweep. Anomalies are logged as RECONCILIATION_ALERT for the
+    # platform's log-based alert rule.
+    interval-ms: ${RECONCILIATION_INTERVAL_MS:300000}
+    initial-delay-ms: ${RECONCILIATION_INITIAL_DELAY_MS:60000}
+    # A transaction sitting in a non-terminal state past this is flagged stuck.
+    stuck-threshold-minutes: ${RECONCILIATION_STUCK_THRESHOLD_MINUTES:30}
 
 springdoc:
   swagger-ui:
