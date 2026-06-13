@@ -4,6 +4,7 @@ import com.paymentservice.ledger.LedgerService
 import com.paymentservice.merchant.MerchantRepository
 import com.paymentservice.merchant.MerchantStatus
 import com.paymentservice.payment.dto.CreatePaymentRequest
+import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -16,6 +17,8 @@ class PaymentService(
     private val merchantRepository: MerchantRepository,
     private val ledgerService: LedgerService
 ) {
+
+    private val log = LoggerFactory.getLogger(javaClass)
 
     /**
      * Layer 1 (Gate): idempotency.
@@ -90,22 +93,46 @@ class PaymentService(
     }
 
     /**
-     * Handles async callback from payment provider.
-     * Provider tells us: authorized or failed.
+     * Handles async callback from payment provider. Idempotent by design:
+     * providers retry on any non-2xx (Stripe retries for days), so this must
+     * never throw on a duplicate or late callback — that would 500 and trigger
+     * an endless retry storm.
+     *
+     * - Already in target state -> duplicate, ack and no-op.
+     * - Valid forward transition -> apply.
+     * - Invalid/late (e.g. callback arrives after we already CAPTURED) -> warn,
+     *   ack and no-op.
      */
     @Transactional
-    fun handleProviderCallback(transactionId: UUID, authorized: Boolean, providerReference: String?) {
+    fun handleProviderCallback(
+        transactionId: UUID,
+        authorized: Boolean,
+        providerReference: String?
+    ): CallbackOutcome {
         val transaction = findTransaction(transactionId)
+        val target = if (authorized) PaymentStatus.AUTHORIZED else PaymentStatus.FAILED
 
-        if (authorized) {
-            transaction.transitionTo(PaymentStatus.AUTHORIZED)
-            transaction.providerReference = providerReference
-        } else {
-            transaction.transitionTo(PaymentStatus.FAILED)
-            transaction.failureReason = "Provider declined"
+        if (transaction.status == target) {
+            log.debug("Duplicate provider callback txn={} already {}", transactionId, target)
+            return CallbackOutcome.DUPLICATE
         }
 
+        if (!transaction.status.canTransitionTo(target)) {
+            log.warn(
+                "Ignoring late provider callback txn={} status={} target={}",
+                transactionId, transaction.status, target
+            )
+            return CallbackOutcome.IGNORED_LATE
+        }
+
+        transaction.transitionTo(target)
+        if (authorized) {
+            transaction.providerReference = providerReference
+        } else {
+            transaction.failureReason = "Provider declined"
+        }
         transactionRepository.save(transaction)
+        return CallbackOutcome.APPLIED
     }
 
     /**
@@ -172,6 +199,16 @@ data class PaymentResult(
     val transaction: Transaction,
     val created: Boolean
 )
+
+/**
+ * Outcome of a provider callback. All outcomes are acked with 200 — the
+ * distinction is for logging/metrics, not for the HTTP response.
+ */
+enum class CallbackOutcome {
+    APPLIED,
+    DUPLICATE,
+    IGNORED_LATE
+}
 
 // Domain exceptions
 class MerchantNotFoundException(val merchantId: UUID) :

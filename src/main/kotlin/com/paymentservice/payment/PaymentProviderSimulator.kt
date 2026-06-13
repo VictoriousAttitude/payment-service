@@ -1,28 +1,32 @@
 package com.paymentservice.payment
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.http.MediaType
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Component
+import org.springframework.web.client.RestClient
 import java.util.UUID
 
 /**
- * Simulates an external payment provider (e.g., Stripe, Adyen).
- * In production, this would be an HTTP call to the provider's API.
- * The provider responds asynchronously via webhook callback.
+ * Simulates an external payment provider (e.g. Stripe, Adyen).
+ * In production this logic lives on the provider's side and they call our
+ * webhook. Here it stands in for the provider: it decides the outcome, signs
+ * the payload with the shared HMAC secret, and POSTs through the real webhook
+ * endpoint — exercising the full signed callback path rather than shortcutting
+ * to the service.
  */
 @Component
 class PaymentProviderSimulator(
-    private val paymentService: PaymentService
+    private val webhookSigner: WebhookSigner,
+    private val objectMapper: ObjectMapper,
+    @Value("\${payment.webhook.callback-url}") private val callbackUrl: String
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
+    private val restClient = RestClient.create()
 
-    /**
-     * Simulates async provider authorization.
-     * In reality: we'd send an HTTP request to the provider,
-     * and they'd call our webhook endpoint hours/seconds later.
-     * Here we simulate with a brief delay + direct service call.
-     */
     @Async
     fun simulateAuthorization(transactionId: UUID) {
         try {
@@ -32,9 +36,20 @@ class PaymentProviderSimulator(
             val authorized = Math.random() > 0.1
             val providerRef = if (authorized) "prov_${UUID.randomUUID().toString().take(8)}" else null
 
-            log.info("Provider callback for txn=$transactionId authorized=$authorized ref=$providerRef")
+            val body = objectMapper.writeValueAsString(
+                ProviderCallbackRequest(transactionId, authorized, providerRef)
+            )
+            val signature = webhookSigner.sign(body)
 
-            paymentService.handleProviderCallback(transactionId, authorized, providerRef)
+            log.info("Posting provider callback txn=$transactionId authorized=$authorized")
+
+            restClient.post()
+                .uri(callbackUrl)
+                .header("X-Webhook-Signature", signature)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .toBodilessEntity()
         } catch (e: Exception) {
             log.error("Provider simulation failed for txn=$transactionId", e)
         }
