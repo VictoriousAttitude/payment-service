@@ -5,6 +5,7 @@ import com.paymentservice.payment.IdempotencyKeyReuseException
 import com.paymentservice.payment.InvalidStateTransitionException
 import com.paymentservice.payment.MerchantNotActiveException
 import com.paymentservice.payment.MerchantNotFoundException
+import com.paymentservice.payment.PaymentAccessDeniedException
 import com.paymentservice.payment.TransactionNotFoundException
 import org.springframework.dao.OptimisticLockingFailureException
 import org.springframework.http.HttpStatus
@@ -71,6 +72,13 @@ class GlobalExceptionHandler {
                 "CONCURRENT_MODIFICATION",
                 "Transaction was modified concurrently; retry with current state"
             )
+        )
+    }
+
+    @ExceptionHandler(PaymentAccessDeniedException::class)
+    fun handleAccessDenied(e: PaymentAccessDeniedException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(
+            ErrorResponse("ACCESS_DENIED", e.message ?: "Access denied")
         )
     }
 

@@ -213,3 +213,6 @@ class TransactionNotFoundException(val transactionId: UUID) :
 
 class IdempotencyKeyReuseException(val idempotencyKey: String) :
     RuntimeException("Idempotency key reused with a different payload: $idempotencyKey")
+
+class PaymentAccessDeniedException(val merchantId: UUID) :
+    RuntimeException("Authenticated merchant $merchantId may not act for another merchant")
