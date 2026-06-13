@@ -1,10 +1,12 @@
 package com.paymentservice.reconciliation
 
+import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.Duration
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Production driver for reconciliation. The checks in ReconciliationService are
@@ -20,10 +22,20 @@ import java.time.Duration
 @Component
 class ReconciliationScheduler(
     private val reconciliationService: ReconciliationService,
+    meterRegistry: MeterRegistry,
     @Value("\${payment.reconciliation.stuck-threshold-minutes:30}") private val stuckThresholdMinutes: Long
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
+
+    // 1 = last sweep clean, 0 = anomalies. Exposed as a gauge so alerting can
+    // fire on reconciliation_healthy == 0 rather than scraping logs.
+    private val healthy = AtomicInteger(1)
+    private val anomalies = meterRegistry.counter("reconciliation.anomalies")
+
+    init {
+        meterRegistry.gauge("reconciliation.healthy", healthy)
+    }
 
     @Scheduled(
         fixedDelayString = "\${payment.reconciliation.interval-ms:300000}",
@@ -34,8 +46,11 @@ class ReconciliationScheduler(
             Duration.ofMinutes(stuckThresholdMinutes)
         )
         if (report.healthy) {
+            healthy.set(1)
             log.info("reconciliation ok: all checks clean, ledger balanced per-currency")
         } else {
+            healthy.set(0)
+            anomalies.increment()
             alert(report)
         }
         return report

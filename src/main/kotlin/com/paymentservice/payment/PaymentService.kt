@@ -4,7 +4,9 @@ import com.paymentservice.ledger.LedgerService
 import com.paymentservice.merchant.MerchantRepository
 import com.paymentservice.merchant.MerchantStatus
 import com.paymentservice.payment.dto.CreatePaymentRequest
+import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -16,7 +18,8 @@ class PaymentService(
     private val transactionRepository: TransactionRepository,
     private val merchantRepository: MerchantRepository,
     private val ledgerService: LedgerService,
-    private val paymentCreator: PaymentCreator
+    private val paymentCreator: PaymentCreator,
+    private val meterRegistry: MeterRegistry
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -100,6 +103,18 @@ class PaymentService(
         authorized: Boolean,
         providerReference: String?
     ): CallbackOutcome {
+        MDC.putCloseable(MDC_TXN_ID, transactionId.toString()).use {
+            val outcome = applyProviderCallback(transactionId, authorized, providerReference)
+            meterRegistry.counter("payments.callbacks", "outcome", outcome.name).increment()
+            return outcome
+        }
+    }
+
+    private fun applyProviderCallback(
+        transactionId: UUID,
+        authorized: Boolean,
+        providerReference: String?
+    ): CallbackOutcome {
         val transaction = findTransaction(transactionId)
         val target = if (authorized) PaymentStatus.AUTHORIZED else PaymentStatus.FAILED
 
@@ -133,20 +148,24 @@ class PaymentService(
      */
     @Transactional
     fun capturePayment(transactionId: UUID): Transaction {
-        val transaction = findTransaction(transactionId)
+        MDC.putCloseable(MDC_TXN_ID, transactionId.toString()).use {
+            val transaction = findTransaction(transactionId)
 
-        // State machine validates AUTHORIZED → CAPTURED
-        transaction.transitionTo(PaymentStatus.CAPTURED)
+            // State machine validates AUTHORIZED → CAPTURED
+            transaction.transitionTo(PaymentStatus.CAPTURED)
 
-        // Ledger: create double-entry records (validates balance before persist)
-        ledgerService.createCaptureEntries(
-            transactionId = transaction.id,
-            merchantId = transaction.merchantId,
-            amount = transaction.amount,
-            currency = transaction.currency
-        )
+            // Ledger: create double-entry records (validates balance before persist)
+            ledgerService.createCaptureEntries(
+                transactionId = transaction.id,
+                merchantId = transaction.merchantId,
+                amount = transaction.amount,
+                currency = transaction.currency
+            )
 
-        return transactionRepository.save(transaction)
+            val saved = transactionRepository.save(transaction)
+            meterRegistry.counter("payments.captured", "currency", transaction.currency).increment()
+            return saved
+        }
     }
 
     /**
@@ -155,20 +174,24 @@ class PaymentService(
      */
     @Transactional
     fun refundPayment(transactionId: UUID): Transaction {
-        val transaction = findTransaction(transactionId)
+        MDC.putCloseable(MDC_TXN_ID, transactionId.toString()).use {
+            val transaction = findTransaction(transactionId)
 
-        // State machine validates CAPTURED → REFUNDED
-        transaction.transitionTo(PaymentStatus.REFUNDED)
+            // State machine validates CAPTURED → REFUNDED
+            transaction.transitionTo(PaymentStatus.REFUNDED)
 
-        // Ledger: create reverse entries (validates balance before persist)
-        ledgerService.createRefundEntries(
-            transactionId = transaction.id,
-            merchantId = transaction.merchantId,
-            amount = transaction.amount,
-            currency = transaction.currency
-        )
+            // Ledger: create reverse entries (validates balance before persist)
+            ledgerService.createRefundEntries(
+                transactionId = transaction.id,
+                merchantId = transaction.merchantId,
+                amount = transaction.amount,
+                currency = transaction.currency
+            )
 
-        return transactionRepository.save(transaction)
+            val saved = transactionRepository.save(transaction)
+            meterRegistry.counter("payments.refunded", "currency", transaction.currency).increment()
+            return saved
+        }
     }
 
     fun getPayment(transactionId: UUID): Transaction {
@@ -178,6 +201,10 @@ class PaymentService(
     private fun findTransaction(id: UUID): Transaction {
         return transactionRepository.findById(id)
             .orElseThrow { TransactionNotFoundException(id) }
+    }
+
+    companion object {
+        private const val MDC_TXN_ID = "txnId"
     }
 }
 

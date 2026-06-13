@@ -22,6 +22,23 @@ spring:
 server:
   port: 8080
 
+management:
+  endpoints:
+    web:
+      exposure:
+        # Scrape target for Prometheus. Actuator is not behind the API-key filter
+        # (it guards only /api/v1/**), so restrict it at the network layer in prod.
+        include: health,info,metrics,prometheus
+  metrics:
+    tags:
+      application: payment-service
+
+logging:
+  pattern:
+    # Inject the MDC correlation ids into every line so a request and the
+    # transaction it touched can be traced across logs.
+    level: "%5p [req=%X{requestId:-},txn=%X{txnId:-}]"
+
 payment:
   webhook:
     # HMAC secret shared with the payment provider. Override via env in prod.
