@@ -1,4 +1,4 @@
-package com.paymentservice.outbox
+package com.paymentservice.payment.outbox
 
 import com.paymentservice.payment.PaymentProviderSimulator
 import org.slf4j.LoggerFactory

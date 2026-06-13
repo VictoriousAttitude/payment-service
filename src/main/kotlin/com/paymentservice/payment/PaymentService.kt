@@ -1,6 +1,8 @@
 package com.paymentservice.payment
 
 import com.paymentservice.ledger.LedgerService
+import com.paymentservice.merchant.MerchantNotActiveException
+import com.paymentservice.merchant.MerchantNotFoundException
 import com.paymentservice.merchant.MerchantRepository
 import com.paymentservice.merchant.MerchantStatus
 import com.paymentservice.payment.dto.CreatePaymentRequest
@@ -246,17 +248,8 @@ enum class CallbackOutcome {
 }
 
 // Domain exceptions
-class MerchantNotFoundException(val merchantId: UUID) :
-    RuntimeException("Merchant not found: $merchantId")
-
-class MerchantNotActiveException(val merchantId: UUID) :
-    RuntimeException("Merchant is not active: $merchantId")
-
 class TransactionNotFoundException(val transactionId: UUID) :
     RuntimeException("Transaction not found: $transactionId")
 
 class IdempotencyKeyReuseException(val idempotencyKey: String) :
     RuntimeException("Idempotency key reused with a different payload: $idempotencyKey")
-
-class PaymentAccessDeniedException(val merchantId: UUID) :
-    RuntimeException("Authenticated merchant $merchantId may not act for another merchant")

@@ -1,7 +1,7 @@
 package com.paymentservice.settlement
 
 import com.paymentservice.TestcontainersConfiguration
-import com.paymentservice.outbox.OutboxDispatcher
+import com.paymentservice.payment.outbox.OutboxDispatcher
 import com.paymentservice.payment.PaymentService
 import com.paymentservice.payment.PaymentStatus
 import com.paymentservice.payment.Transaction

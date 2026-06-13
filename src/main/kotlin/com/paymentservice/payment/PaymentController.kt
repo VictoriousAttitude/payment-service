@@ -1,8 +1,9 @@
 package com.paymentservice.payment
 
-import com.paymentservice.auth.ApiKeyAuthFilter
 import com.paymentservice.payment.dto.CreatePaymentRequest
 import com.paymentservice.payment.dto.PaymentResponse
+import com.paymentservice.shared.MERCHANT_ID_ATTRIBUTE
+import com.paymentservice.shared.PaymentAccessDeniedException
 import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -17,7 +18,7 @@ class PaymentController(
 
     @PostMapping
     fun createPayment(
-        @RequestAttribute(ApiKeyAuthFilter.MERCHANT_ID_ATTRIBUTE) merchantId: UUID,
+        @RequestAttribute(MERCHANT_ID_ATTRIBUTE) merchantId: UUID,
         @RequestHeader("Idempotency-Key") idempotencyKey: String,
         @Valid @RequestBody request: CreatePaymentRequest
     ): ResponseEntity<PaymentResponse> {
@@ -38,7 +39,7 @@ class PaymentController(
 
     @GetMapping("/{id}")
     fun getPayment(
-        @RequestAttribute(ApiKeyAuthFilter.MERCHANT_ID_ATTRIBUTE) merchantId: UUID,
+        @RequestAttribute(MERCHANT_ID_ATTRIBUTE) merchantId: UUID,
         @PathVariable id: UUID
     ): PaymentResponse {
         return PaymentResponse.from(ownedTransaction(id, merchantId))
@@ -46,7 +47,7 @@ class PaymentController(
 
     @PostMapping("/{id}/capture")
     fun capturePayment(
-        @RequestAttribute(ApiKeyAuthFilter.MERCHANT_ID_ATTRIBUTE) merchantId: UUID,
+        @RequestAttribute(MERCHANT_ID_ATTRIBUTE) merchantId: UUID,
         @PathVariable id: UUID
     ): PaymentResponse {
         ownedTransaction(id, merchantId)
@@ -55,7 +56,7 @@ class PaymentController(
 
     @PostMapping("/{id}/refund")
     fun refundPayment(
-        @RequestAttribute(ApiKeyAuthFilter.MERCHANT_ID_ATTRIBUTE) merchantId: UUID,
+        @RequestAttribute(MERCHANT_ID_ATTRIBUTE) merchantId: UUID,
         @PathVariable id: UUID
     ): PaymentResponse {
         ownedTransaction(id, merchantId)

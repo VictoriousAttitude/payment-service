@@ -1,7 +1,7 @@
 package com.paymentservice.payment
 
 import com.paymentservice.TestcontainersConfiguration
-import com.paymentservice.outbox.OutboxDispatcher
+import com.paymentservice.payment.outbox.OutboxDispatcher
 import com.paymentservice.payment.dto.CreatePaymentRequest
 import com.paymentservice.settlement.SettlementProcessor
 import org.junit.jupiter.api.Test

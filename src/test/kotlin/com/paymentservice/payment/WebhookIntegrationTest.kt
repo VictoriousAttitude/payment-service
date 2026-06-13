@@ -13,7 +13,7 @@ import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.test.context.ActiveProfiles
-import com.paymentservice.outbox.OutboxDispatcher
+import com.paymentservice.payment.outbox.OutboxDispatcher
 import java.util.UUID
 import kotlin.test.assertEquals
 

@@ -1,4 +1,4 @@
-package com.paymentservice.outbox
+package com.paymentservice.payment.outbox
 
 import com.paymentservice.payment.PaymentStatus
 import com.paymentservice.payment.TransactionEvent

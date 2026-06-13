@@ -21,6 +21,12 @@ repositories {
 
 extra["testcontainers.version"] = "1.21.4"
 
+dependencyManagement {
+	imports {
+		mavenBom("org.springframework.modulith:spring-modulith-bom:1.4.1")
+	}
+}
+
 dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
 	implementation("io.micrometer:micrometer-registry-prometheus")
@@ -35,6 +41,7 @@ dependencies {
 	runtimeOnly("org.postgresql:postgresql")
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
 	testImplementation("org.springframework.boot:spring-boot-testcontainers")
+	testImplementation("org.springframework.modulith:spring-modulith-starter-test")
 	testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
 	testImplementation("org.testcontainers:junit-jupiter")
 	testImplementation("org.testcontainers:postgresql")

@@ -6,7 +6,8 @@ import com.paymentservice.ledger.EntryType
 import com.paymentservice.ledger.LedgerRepository
 import com.paymentservice.ledger.LedgerService
 import com.paymentservice.ledger.LedgerEntry
-import com.paymentservice.outbox.OutboxDispatcher
+import com.paymentservice.merchant.MerchantNotFoundException
+import com.paymentservice.payment.outbox.OutboxDispatcher
 import com.paymentservice.payment.dto.CreatePaymentRequest
 import com.paymentservice.reconciliation.ReconciliationService
 import org.junit.jupiter.api.Test

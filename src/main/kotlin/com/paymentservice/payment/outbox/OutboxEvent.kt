@@ -1,4 +1,4 @@
-package com.paymentservice.outbox
+package com.paymentservice.payment.outbox
 
 import jakarta.persistence.*
 import java.time.Instant

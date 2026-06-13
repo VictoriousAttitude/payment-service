@@ -1,9 +1,10 @@
 package com.paymentservice.auth
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.paymentservice.config.ErrorResponse
 import com.paymentservice.merchant.MerchantRepository
 import com.paymentservice.merchant.MerchantStatus
+import com.paymentservice.shared.ErrorResponse
+import com.paymentservice.shared.MERCHANT_ID_ATTRIBUTE
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
@@ -65,7 +66,6 @@ class ApiKeyAuthFilter(
 
     companion object {
         const val API_KEY_HEADER = "X-Api-Key"
-        const val MERCHANT_ID_ATTRIBUTE = "authenticatedMerchantId"
         private val PROTECTED_PREFIXES = listOf("/api/v1/payments", "/api/v1/merchants")
     }
 }

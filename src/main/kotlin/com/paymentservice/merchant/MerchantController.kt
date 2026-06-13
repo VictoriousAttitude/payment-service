@@ -1,8 +1,8 @@
 package com.paymentservice.merchant
 
-import com.paymentservice.auth.ApiKeyAuthFilter
 import com.paymentservice.ledger.LedgerService
-import com.paymentservice.payment.PaymentAccessDeniedException
+import com.paymentservice.shared.MERCHANT_ID_ATTRIBUTE
+import com.paymentservice.shared.PaymentAccessDeniedException
 import org.springframework.web.bind.annotation.*
 import java.util.UUID
 
@@ -15,7 +15,7 @@ class MerchantController(
 
     @GetMapping("/{id}/balance")
     fun getBalance(
-        @RequestAttribute(ApiKeyAuthFilter.MERCHANT_ID_ATTRIBUTE) merchantId: UUID,
+        @RequestAttribute(MERCHANT_ID_ATTRIBUTE) merchantId: UUID,
         @PathVariable id: UUID
     ): BalanceResponse {
         // A merchant may only read its own balance.
@@ -24,7 +24,7 @@ class MerchantController(
         }
 
         val merchant = merchantRepository.findById(id)
-            .orElseThrow { com.paymentservice.payment.MerchantNotFoundException(id) }
+            .orElseThrow { MerchantNotFoundException(id) }
 
         val balances = ledgerService.getMerchantBalances(merchant.id)
             .map { CurrencyAmount(currency = it.currency, amount = it.net) }

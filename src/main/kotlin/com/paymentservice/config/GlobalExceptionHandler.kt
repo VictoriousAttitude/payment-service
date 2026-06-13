@@ -1,12 +1,13 @@
 package com.paymentservice.config
 
 import com.paymentservice.ledger.LedgerImbalanceException
+import com.paymentservice.merchant.MerchantNotActiveException
+import com.paymentservice.merchant.MerchantNotFoundException
 import com.paymentservice.payment.IdempotencyKeyReuseException
 import com.paymentservice.payment.InvalidStateTransitionException
-import com.paymentservice.payment.MerchantNotActiveException
-import com.paymentservice.payment.MerchantNotFoundException
-import com.paymentservice.payment.PaymentAccessDeniedException
 import com.paymentservice.payment.TransactionNotFoundException
+import com.paymentservice.shared.ErrorResponse
+import com.paymentservice.shared.PaymentAccessDeniedException
 import org.springframework.dao.OptimisticLockingFailureException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -90,9 +91,3 @@ class GlobalExceptionHandler {
         )
     }
 }
-
-data class ErrorResponse(
-    val error: String,
-    val message: String,
-    val details: Map<String, String>? = null
-)

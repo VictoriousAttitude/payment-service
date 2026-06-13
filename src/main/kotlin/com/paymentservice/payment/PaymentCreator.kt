@@ -1,7 +1,7 @@
 package com.paymentservice.payment
 
-import com.paymentservice.outbox.OutboxEvent
-import com.paymentservice.outbox.OutboxEventRepository
+import com.paymentservice.payment.outbox.OutboxEvent
+import com.paymentservice.payment.outbox.OutboxEventRepository
 import com.paymentservice.payment.dto.CreatePaymentRequest
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
