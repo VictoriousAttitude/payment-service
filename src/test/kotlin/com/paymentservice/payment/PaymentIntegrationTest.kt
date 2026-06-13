@@ -19,6 +19,7 @@ import java.util.UUID
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.Executors
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -358,6 +359,21 @@ class PaymentIntegrationTest {
         assertTrue(global.balanced)
         assertTrue(global.byCurrency.any { it.currency == "EUR" })
         assertTrue(global.byCurrency.any { it.currency == "USD" })
+    }
+
+    @Test
+    fun `ledger entries are immutable - db trigger rejects delete`() {
+        val txn = captureFresh(amount = 10_000L, currency = "EUR")
+        val entry = ledgerService.getEntriesForTransaction(txn.id).first()
+
+        // the append-only invariant is enforced in the DB, not just in code
+        assertFailsWith<Exception> {
+            ledgerRepository.delete(entry)
+            ledgerRepository.flush()
+        }
+
+        // the entry survived the rejected delete
+        assertTrue(ledgerRepository.findById(entry.id).isPresent)
     }
 
     // ─── Edge cases ─────────────────────────────────────────────────

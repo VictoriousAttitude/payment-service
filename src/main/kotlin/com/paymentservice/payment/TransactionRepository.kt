@@ -23,10 +23,13 @@ interface TransactionRepository : JpaRepository<Transaction, UUID> {
     """)
     fun findStuckTransactions(statuses: Collection<PaymentStatus>, before: Instant): List<Transaction>
 
+    // NOT EXISTS, not NOT IN: a NULL transactionId in the subquery would make
+    // NOT IN evaluate to UNKNOWN and silently return zero rows, masking the very
+    // data-integrity gaps this query exists to find.
     @Query("""
         SELECT t FROM Transaction t
         WHERE t.status IN :statuses
-        AND t.id NOT IN (SELECT DISTINCT le.transactionId FROM LedgerEntry le)
+        AND NOT EXISTS (SELECT 1 FROM LedgerEntry le WHERE le.transactionId = t.id)
     """)
     fun findWithoutLedgerEntries(statuses: Collection<PaymentStatus>): List<Transaction>
 
