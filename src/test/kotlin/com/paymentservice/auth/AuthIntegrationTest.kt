@@ -37,8 +37,15 @@ class AuthIntegrationTest {
     private val merchantAId = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
     private val merchantAKey = "test-api-key-123"
 
-    private fun newMerchant(): Merchant =
-        merchantRepository.save(Merchant(name = "other", apiKey = "key-${UUID.randomUUID()}"))
+    // Returns the saved merchant paired with its raw (unhashed) key, since only
+    // the hash is persisted but callers need the plaintext for the header.
+    private fun newMerchant(): Pair<Merchant, String> {
+        val rawKey = "key-${UUID.randomUUID()}"
+        val merchant = merchantRepository.save(
+            Merchant(name = "other", apiKeyHash = ApiKeyHasher.hash(rawKey))
+        )
+        return merchant to rawKey
+    }
 
     private fun headers(apiKey: String?, idempotencyKey: String? = null) = HttpHeaders().apply {
         contentType = MediaType.APPLICATION_JSON
@@ -71,11 +78,12 @@ class AuthIntegrationTest {
 
     @Test
     fun `inactive merchant key is rejected`() {
+        val rawKey = "key-${UUID.randomUUID()}"
         val suspended = merchantRepository.save(
-            Merchant(name = "suspended", apiKey = "key-${UUID.randomUUID()}",
+            Merchant(name = "suspended", apiKeyHash = ApiKeyHasher.hash(rawKey),
                 status = com.paymentservice.merchant.MerchantStatus.SUSPENDED)
         )
-        val response = createPayment(apiKey = suspended.apiKey, bodyMerchantId = suspended.id)
+        val response = createPayment(apiKey = rawKey, bodyMerchantId = suspended.id)
         assertEquals(HttpStatus.UNAUTHORIZED, response.statusCode)
     }
 
@@ -87,7 +95,7 @@ class AuthIntegrationTest {
 
     @Test
     fun `body merchant id different from the key is forbidden`() {
-        val other = newMerchant()
+        val (other, _) = newMerchant()
         val response = createPayment(apiKey = merchantAKey, bodyMerchantId = other.id)
         assertEquals(HttpStatus.FORBIDDEN, response.statusCode)
     }
@@ -98,11 +106,11 @@ class AuthIntegrationTest {
         assertEquals(HttpStatus.CREATED, created.statusCode)
         val paymentId = objectMapper.readTree(created.body).get("id").asText()
 
-        val other = newMerchant()
+        val (_, otherKey) = newMerchant()
         val response = restTemplate.exchange(
             "/api/v1/payments/$paymentId",
             HttpMethod.GET,
-            HttpEntity<Void>(headers(other.apiKey)),
+            HttpEntity<Void>(headers(otherKey)),
             String::class.java
         )
         assertEquals(HttpStatus.NOT_FOUND, response.statusCode)
@@ -124,7 +132,7 @@ class AuthIntegrationTest {
 
     @Test
     fun `merchant cannot read another merchant's balance`() {
-        val other = newMerchant()
+        val (other, _) = newMerchant()
         val response = restTemplate.exchange(
             "/api/v1/merchants/${other.id}/balance",
             HttpMethod.GET,

@@ -46,7 +46,7 @@ class ApiKeyAuthFilter(
             return
         }
 
-        val merchant = merchantRepository.findByApiKey(apiKey)
+        val merchant = merchantRepository.findByApiKeyHash(ApiKeyHasher.hash(apiKey))
         if (merchant == null || merchant.status != MerchantStatus.ACTIVE) {
             // Same message for unknown and inactive keys: don't reveal which.
             reject(response, "API_KEY_INVALID", "Invalid or inactive API key")

@@ -16,8 +16,9 @@ class Merchant(
 
     val email: String? = null,
 
-    @Column(name = "api_key", nullable = false, unique = true)
-    val apiKey: String,
+    // SHA-256 hex of the raw key; the plaintext key is never stored at rest.
+    @Column(name = "api_key_hash", nullable = false, unique = true)
+    val apiKeyHash: String,
 
     @Column(nullable = false)
     @Enumerated(EnumType.STRING)
