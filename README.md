@@ -7,34 +7,34 @@ Kotlin, Spring Boot 3, PostgreSQL — focused on financial correctness and opera
 ## architecture
 
 ```
-                      X-Api-Key auth filter (hashed keys, ownership checks)
+        X-Api-Key auth filter (hashed keys, ownership checks)
                                        │
 ┌──────────────────────────────────────▼───────────────────────────────┐
-│  API layer                                                            │
-│  POST /payments  /capture  /refund  GET /  GET /merchants/{id}/balance │
+│  API layer                                                           │
+│  POST /payments /capture /refund GET / GET /merchants/ {id} /balance │
 └──────────────────────────────────────┬───────────────────────────────┘
-                                        │
+                                       │
 ┌──────────────────────────────────────▼───────────────────────────────┐
-│  Layer 1: GATE                                                        │
-│  - idempotency (DB unique constraint + sha-256 request hash)          │
-│  - request validation (Bean Validation)                               │
-│  - merchant verification (active status check)                        │
+│  Layer 1: GATE                                                       │
+│  - idempotency (DB unique constraint + sha-256 request hash)         │
+│  - request validation (Bean Validation)                              │
+│  - merchant verification (active status check)                       │
 └──────────────────────────────────────┬───────────────────────────────┘
-                                        │
+                                       │
 ┌──────────────────────────────────────▼───────────────────────────────┐
-│  Layer 2: CORE                                                        │
-│  - state machine (enum with transition rules)                         │
-│  - double-entry ledger (immutable, append-only, DB-enforced)          │
-│  - atomic writes (@Transactional: status + ledger)                    │
-│  - optimistic concurrency (@Version) against double-capture           │
+│  Layer 2: CORE                                                       │
+│  - state machine (enum with transition rules)                        │
+│  - double-entry ledger (immutable, append-only, DB-enforced)         │
+│  - atomic writes (@Transactional: status + ledger)                   │
+│  - optimistic concurrency (@Version) against double-capture          │
 └──────────────────────────────────────┬───────────────────────────────┘
-                                        │
+                                       │
 ┌──────────────────────────────────────▼───────────────────────────────┐
-│  Layer 3: GUARD (scheduled)                                           │
-│  - stuck / missing-ledger / imbalanced detection                      │
-│  - per-currency + global ledger balance verification                  │
-│  - log-based alert marker + prometheus gauge/counter                  │
-└───────────────────────────────────────────────────────────────────────┘
+│  Layer 3: GUARD (scheduled)                                          │
+│  - stuck / missing-ledger / imbalanced detection                     │
+│  - per-currency + global ledger balance verification                 │
+│  - log-based alert marker + prometheus gauge/counter                 │
+└──────────────────────────────────────────────────────────────────────┘
 
   async spine: transactional outbox → @Scheduled dispatcher (SKIP LOCKED,
   exponential backoff, dead-letter) → provider simulator → signed webhook
