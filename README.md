@@ -2,7 +2,7 @@
 
 A payment processing service built around a double-entry ledger as the source of truth, with a 3-layer safety model inspired by [Stripe's money movement validation architecture](https://stripe.com/blog/payment-api-design).
 
-Kotlin, Spring Boot 3, PostgreSQL — focused on financial correctness and operability, not feature breadth. It's not a blueprint. I am just providing my thinking process here. See [production gaps](#production-gaps--next-steps) for an honest account of what real-world processing would still require.
+Kotlin, Spring Boot 3, PostgreSQL. It's not a blueprint. I am just providing my thinking process here.
 
 ## architecture
 
