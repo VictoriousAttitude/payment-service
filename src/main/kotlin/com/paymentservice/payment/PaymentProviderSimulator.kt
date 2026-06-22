@@ -3,32 +3,34 @@ package com.paymentservice.payment
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
-import org.springframework.http.MediaType
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Component
-import org.springframework.web.client.RestClient
 import java.util.UUID
 
 /**
- * Simulates an external payment provider (e.g. Stripe, Adyen).
- * In production this logic lives on the provider's side and they call our
- * webhook. Here it stands in for the provider: it decides the outcome, signs
- * the payload with the shared HMAC secret, and POSTs through the real webhook
- * endpoint — exercising the full signed callback path rather than shortcutting
- * to the service.
+ * Simulates an external payment provider (e.g. Stripe, Adyen) behind the
+ * PaymentProviderPort. In production this logic lives on the provider's side
+ * and they call our webhook; here it stands in for them — it decides the
+ * outcome, signs the payload with the shared HMAC secret, and POSTs through the
+ * real signed-callback path via the resilient ProviderCallbackClient.
+ *
+ * The decide-and-sign step lives here; the resilient HTTP edge (retry, circuit
+ * breaker, timeout) lives in ProviderCallbackClient, so the @Resilience4j
+ * aspects fire across the bean boundary instead of being bypassed by a
+ * self-invocation.
  */
 @Component
 class PaymentProviderSimulator(
     private val webhookSigner: WebhookSigner,
     private val objectMapper: ObjectMapper,
+    private val callbackClient: ProviderCallbackClient,
     @Value("\${payment.webhook.callback-url}") private val callbackUrl: String
-) {
+) : PaymentProviderPort {
 
     private val log = LoggerFactory.getLogger(javaClass)
-    private val restClient = RestClient.create()
 
     @Async
-    fun simulateAuthorization(transactionId: UUID) {
+    override fun requestAuthorization(transactionId: UUID) {
         try {
             Thread.sleep(500) // simulate network latency
 
@@ -43,13 +45,7 @@ class PaymentProviderSimulator(
 
             log.info("Posting provider callback txn=$transactionId authorized=$authorized")
 
-            restClient.post()
-                .uri(callbackUrl)
-                .header("X-Webhook-Signature", signature)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(body)
-                .retrieve()
-                .toBodilessEntity()
+            callbackClient.postSignedCallback(callbackUrl, body, signature)
         } catch (e: Exception) {
             log.error("Provider simulation failed for txn=$transactionId", e)
         }

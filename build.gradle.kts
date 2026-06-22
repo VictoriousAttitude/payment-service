@@ -29,7 +29,9 @@ dependencyManagement {
 
 dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
+	implementation("org.springframework.boot:spring-boot-starter-aop")
 	implementation("io.micrometer:micrometer-registry-prometheus")
+	implementation("io.github.resilience4j:resilience4j-spring-boot3:2.2.0")
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 	implementation("org.springframework.boot:spring-boot-starter-validation")
 	implementation("org.springframework.boot:spring-boot-starter-web")

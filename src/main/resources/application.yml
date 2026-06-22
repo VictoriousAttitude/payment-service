@@ -72,6 +72,32 @@ payment:
     interval-ms: ${AUTHORIZATION_EXPIRY_INTERVAL_MS:300000}
     initial-delay-ms: ${AUTHORIZATION_EXPIRY_INITIAL_DELAY_MS:30000}
     validity-minutes: ${AUTHORIZATION_VALIDITY_MINUTES:10080}
+  provider:
+    # Connect/read timeout on the outbound provider callback POST. A hung
+    # provider must not pin a dispatcher thread; the circuit breaker counts the
+    # timeout as a failure.
+    timeout-ms: ${PROVIDER_TIMEOUT_MS:2000}
+
+# Resilience around the outbound provider call. The circuit breaker sheds load
+# when the provider degrades (fail fast instead of piling up timeouts); the
+# retry absorbs transient blips. Aspect order is retry(circuitBreaker(call)),
+# so a call rejected by an open breaker is not retried.
+resilience4j:
+  circuitbreaker:
+    instances:
+      paymentProvider:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+  retry:
+    instances:
+      paymentProvider:
+        max-attempts: 3
+        wait-duration: 200ms
 
 springdoc:
   swagger-ui:

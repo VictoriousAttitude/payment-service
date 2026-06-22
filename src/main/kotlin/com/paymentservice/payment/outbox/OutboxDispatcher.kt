@@ -1,6 +1,6 @@
 package com.paymentservice.payment.outbox
 
-import com.paymentservice.payment.PaymentProviderSimulator
+import com.paymentservice.payment.PaymentProviderPort
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
@@ -20,7 +20,7 @@ import org.springframework.stereotype.Component
 class OutboxDispatcher(
     private val outboxProcessor: OutboxProcessor,
     private val outboxRepository: OutboxEventRepository,
-    private val providerSimulator: PaymentProviderSimulator
+    private val provider: PaymentProviderPort
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -34,7 +34,7 @@ class OutboxDispatcher(
         for (event in batch) {
             try {
                 val transactionId = outboxProcessor.dispatch(event.id) ?: continue
-                providerSimulator.simulateAuthorization(transactionId)
+                provider.requestAuthorization(transactionId)
             } catch (e: Exception) {
                 log.error("Outbox dispatch failed for event={}", event.id, e)
                 outboxProcessor.recordFailure(event.id, e.message ?: e.javaClass.simpleName)
