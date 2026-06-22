@@ -46,5 +46,11 @@ enum class AccountType {
     MERCHANT,
     PLATFORM,
     INCOMING,
-    OUTGOING
+    OUTGOING,
+
+    // Money clawed back from the merchant to the cardholder when a chargeback is
+    // lost. A distinct flow account from OUTGOING so a chargeback never counts as
+    // a refund (sumRefunded keys on OUTGOING CREDIT) and the two reversal paths
+    // stay independently auditable.
+    CHARGEBACK
 }

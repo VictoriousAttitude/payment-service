@@ -12,6 +12,11 @@ class LedgerService(
 
     companion object {
         const val PLATFORM_FEE_BPS = 200L // 2.00% in basis points (1 bp = 0.01%)
+
+        // Flat dispute fee levied on a lost chargeback, in the minor unit. Real
+        // acquirers charge a fixed fee (e.g. Stripe $15), not a percentage — it
+        // covers the network's fixed handling cost regardless of ticket size.
+        const val CHARGEBACK_FEE = 1_500L
         val PLATFORM_ACCOUNT_ID: UUID = UUID.fromString("00000000-0000-0000-0000-000000000001")
 
         /**
@@ -99,6 +104,62 @@ class LedgerService(
                 amount = amount,
                 currency = currency,
                 description = "Refund issued"
+            )
+        )
+
+        validateBalance(entries)
+        ledgerRepository.saveAll(entries)
+    }
+
+    /**
+     * Posts the money movement for a lost chargeback. The cardholder's bank
+     * reverses the sale: the merchant is debited the full disputed amount (the
+     * original platform fee is NOT returned — the merchant eats it, as acquirers
+     * do) and the funds leave via the CHARGEBACK flow account to the cardholder.
+     * On top, a flat dispute fee is charged: debit merchant, credit platform.
+     * The set balances (debits = amount + fee = credits) and posts nothing that
+     * sumRefunded/sumCaptured would miscount.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun createChargebackEntries(transactionId: UUID, merchantId: UUID, amount: Long, currency: String) {
+        val fee = CHARGEBACK_FEE
+
+        val entries = listOf(
+            LedgerEntry(
+                transactionId = transactionId,
+                accountType = AccountType.MERCHANT,
+                accountId = merchantId,
+                entryType = EntryType.DEBIT,
+                amount = amount,
+                currency = currency,
+                description = "Chargeback: funds reversed"
+            ),
+            LedgerEntry(
+                transactionId = transactionId,
+                accountType = AccountType.CHARGEBACK,
+                accountId = transactionId,
+                entryType = EntryType.CREDIT,
+                amount = amount,
+                currency = currency,
+                description = "Chargeback: returned to cardholder"
+            ),
+            LedgerEntry(
+                transactionId = transactionId,
+                accountType = AccountType.MERCHANT,
+                accountId = merchantId,
+                entryType = EntryType.DEBIT,
+                amount = fee,
+                currency = currency,
+                description = "Chargeback fee"
+            ),
+            LedgerEntry(
+                transactionId = transactionId,
+                accountType = AccountType.PLATFORM,
+                accountId = PLATFORM_ACCOUNT_ID,
+                entryType = EntryType.CREDIT,
+                amount = fee,
+                currency = currency,
+                description = "Chargeback fee"
             )
         )
 

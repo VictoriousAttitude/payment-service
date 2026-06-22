@@ -1,5 +1,9 @@
 package com.paymentservice.config
 
+import com.paymentservice.dispute.DisputeAlreadyOpenException
+import com.paymentservice.dispute.DisputeNotAllowedException
+import com.paymentservice.dispute.DisputeNotFoundException
+import com.paymentservice.dispute.InvalidDisputeTransitionException
 import com.paymentservice.ledger.LedgerImbalanceException
 import com.paymentservice.merchant.MerchantNotActiveException
 import com.paymentservice.merchant.MerchantNotFoundException
@@ -74,6 +78,42 @@ class GlobalExceptionHandler {
     fun handleInvalidAmount(e: InvalidPaymentAmountException): ResponseEntity<ErrorResponse> {
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(
             ErrorResponse("INVALID_PAYMENT_AMOUNT", e.message ?: "Invalid payment amount")
+        )
+    }
+
+    @ExceptionHandler(DisputeNotFoundException::class)
+    fun handleDisputeNotFound(e: DisputeNotFoundException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+            ErrorResponse("DISPUTE_NOT_FOUND", e.message ?: "Dispute not found")
+        )
+    }
+
+    // 409: a live dispute already exists for the transaction; opening a second
+    // one conflicts with the in-flight chargeback.
+    @ExceptionHandler(DisputeAlreadyOpenException::class)
+    fun handleDisputeAlreadyOpen(e: DisputeAlreadyOpenException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(
+            ErrorResponse("DISPUTE_ALREADY_OPEN", e.message ?: "A live dispute already exists")
+        )
+    }
+
+    @ExceptionHandler(InvalidDisputeTransitionException::class)
+    fun handleInvalidDisputeTransition(e: InvalidDisputeTransitionException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(
+            ErrorResponse(
+                error = "INVALID_DISPUTE_TRANSITION",
+                message = e.message ?: "Invalid dispute transition",
+                details = mapOf("from" to e.from.name, "to" to e.to.name)
+            )
+        )
+    }
+
+    // 422: well-formed request, but the transaction has no disputable money
+    // (nothing captured, or the amount exceeds the net captured balance).
+    @ExceptionHandler(DisputeNotAllowedException::class)
+    fun handleDisputeNotAllowed(e: DisputeNotAllowedException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(
+            ErrorResponse("DISPUTE_NOT_ALLOWED", e.message ?: "Dispute not allowed")
         )
     }
 
