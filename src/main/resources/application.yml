@@ -99,6 +99,18 @@ resilience4j:
         max-attempts: 3
         wait-duration: 200ms
 
+camunda:
+  bpm:
+    # The embedded process engine manages its own ACT_* tables; it creates and
+    # upgrades them itself (separate from our Flyway-managed business schema,
+    # which Hibernate validates). Our entities never map ACT_* tables, so the
+    # two schema lifecycles do not collide.
+    database:
+      schema-update: true
+    # No-op history is enough for orchestration; AUDIT would bloat the DB.
+    history-level: activity
+    deployment-resource-pattern: classpath*:**/*.bpmn
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                  targetNamespace="http://paymentservice.com/dispute"
+                  id="definitions-dispute-deadline">
+
+  <!--
+    Evidence-deadline race for a chargeback. Once a dispute is opened the engine
+    waits at the event-based gateway for whichever comes first: the merchant's
+    evidence (a correlated message) or the response deadline (a timer). If the
+    deadline wins, the merchant forfeits and the service task resolves the
+    dispute as LOST. This is the time-bounded behavior the imperative code does
+    not model; the engine persists the wait and survives restarts.
+  -->
+  <bpmn:message id="Message_evidenceSubmitted" name="evidenceSubmitted" />
+
+  <bpmn:process id="dispute-deadline" name="Dispute evidence deadline" isExecutable="true"
+                camunda:historyTimeToLive="P30D">
+
+    <bpmn:startEvent id="opened">
+      <bpmn:outgoing>flow_to_gateway</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:sequenceFlow id="flow_to_gateway" sourceRef="opened" targetRef="await" />
+
+    <bpmn:eventBasedGateway id="await">
+      <bpmn:incoming>flow_to_gateway</bpmn:incoming>
+      <bpmn:outgoing>flow_to_evidence</bpmn:outgoing>
+      <bpmn:outgoing>flow_to_deadline</bpmn:outgoing>
+    </bpmn:eventBasedGateway>
+
+    <bpmn:sequenceFlow id="flow_to_evidence" sourceRef="await" targetRef="evidenceCatch" />
+    <bpmn:sequenceFlow id="flow_to_deadline" sourceRef="await" targetRef="deadlineCatch" />
+
+    <bpmn:intermediateCatchEvent id="evidenceCatch" name="Evidence submitted">
+      <bpmn:incoming>flow_to_evidence</bpmn:incoming>
+      <bpmn:outgoing>flow_to_contested</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="med_evidence" messageRef="Message_evidenceSubmitted" />
+    </bpmn:intermediateCatchEvent>
+
+    <bpmn:intermediateCatchEvent id="deadlineCatch" name="Deadline elapsed">
+      <bpmn:incoming>flow_to_deadline</bpmn:incoming>
+      <bpmn:outgoing>flow_to_forfeit</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="ted_deadline">
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">${deadline}</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:intermediateCatchEvent>
+
+    <bpmn:sequenceFlow id="flow_to_contested" sourceRef="evidenceCatch" targetRef="contested" />
+    <bpmn:sequenceFlow id="flow_to_forfeit" sourceRef="deadlineCatch" targetRef="forfeit" />
+
+    <bpmn:serviceTask id="forfeit" name="Forfeit dispute"
+                      camunda:delegateExpression="${disputeForfeitDelegate}">
+      <bpmn:incoming>flow_to_forfeit</bpmn:incoming>
+      <bpmn:outgoing>flow_to_forfeited</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:sequenceFlow id="flow_to_forfeited" sourceRef="forfeit" targetRef="forfeited" />
+
+    <bpmn:endEvent id="contested" name="Contested">
+      <bpmn:incoming>flow_to_contested</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:endEvent id="forfeited" name="Forfeited">
+      <bpmn:incoming>flow_to_forfeited</bpmn:incoming>
+    </bpmn:endEvent>
+
+  </bpmn:process>
+</bpmn:definitions>

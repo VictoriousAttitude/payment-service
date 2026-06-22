@@ -27,3 +27,11 @@ payment:
     # Unreachable: the simulated provider's async callback fails fast and never
     # mutates state behind the test's back. Tests post signed callbacks directly.
     callback-url: http://localhost:1/api/v1/webhooks/provider-callback
+
+# Park the background job executor so BPMN timers fire only when a test drives
+# them explicitly (ManagementService.executeJob) — no async timer can resolve a
+# dispute behind another test's back.
+camunda:
+  bpm:
+    job-execution:
+      enabled: false
