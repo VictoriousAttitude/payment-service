@@ -16,6 +16,13 @@ payment:
     interval-ms: 3600000
     initial-delay-ms: 3600000
     delay-minutes: 0
+  authorization:
+    # Park the scheduled sweep; the test drives expireStaleAuthorizations()
+    # directly. validity-minutes 0 makes a fresh authorization immediately
+    # expirable when the test chooses to run the sweep.
+    interval-ms: 3600000
+    initial-delay-ms: 3600000
+    validity-minutes: 0
   webhook:
     # Unreachable: the simulated provider's async callback fails fast and never
     # mutates state behind the test's back. Tests post signed callbacks directly.

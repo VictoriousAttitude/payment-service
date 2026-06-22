@@ -50,6 +50,9 @@ class PaymentStatusTest {
             Arguments.of(PaymentStatus.AUTHORIZED, PaymentStatus.PARTIALLY_CAPTURED),
             Arguments.of(PaymentStatus.AUTHORIZED, PaymentStatus.CAPTURED),
             Arguments.of(PaymentStatus.AUTHORIZED, PaymentStatus.FAILED),
+            // release an uncaptured authorization: cancel or lapse
+            Arguments.of(PaymentStatus.AUTHORIZED, PaymentStatus.VOIDED),
+            Arguments.of(PaymentStatus.AUTHORIZED, PaymentStatus.EXPIRED),
             // multi-capture self-loop then completion or refund
             Arguments.of(PaymentStatus.PARTIALLY_CAPTURED, PaymentStatus.PARTIALLY_CAPTURED),
             Arguments.of(PaymentStatus.PARTIALLY_CAPTURED, PaymentStatus.CAPTURED),
@@ -74,6 +77,10 @@ class PaymentStatusTest {
             // refund is a one-way phase: no capture after a refund starts
             Arguments.of(PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.CAPTURED),
             Arguments.of(PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.PARTIALLY_CAPTURED),
+            // void only releases an untouched authorization, never a capture
+            Arguments.of(PaymentStatus.PARTIALLY_CAPTURED, PaymentStatus.VOIDED),
+            Arguments.of(PaymentStatus.CAPTURED, PaymentStatus.VOIDED),
+            Arguments.of(PaymentStatus.CAPTURED, PaymentStatus.EXPIRED),
             // skip transitions
             Arguments.of(PaymentStatus.CREATED, PaymentStatus.CAPTURED),
             Arguments.of(PaymentStatus.PENDING, PaymentStatus.CAPTURED),
@@ -97,7 +104,9 @@ class PaymentStatusTest {
             Arguments.of(PaymentStatus.PARTIALLY_REFUNDED, false),
             Arguments.of(PaymentStatus.SETTLED, true),
             Arguments.of(PaymentStatus.FAILED, true),
-            Arguments.of(PaymentStatus.REFUNDED, true)
+            Arguments.of(PaymentStatus.REFUNDED, true),
+            Arguments.of(PaymentStatus.VOIDED, true),
+            Arguments.of(PaymentStatus.EXPIRED, true)
         )
     }
 }

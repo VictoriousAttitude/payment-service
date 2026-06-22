@@ -71,6 +71,16 @@ class PaymentController(
         return PaymentResponse.from(paymentService.getPaymentView(id))
     }
 
+    @PostMapping("/{id}/void")
+    fun voidPayment(
+        @RequestAttribute(MERCHANT_ID_ATTRIBUTE) merchantId: UUID,
+        @PathVariable id: UUID
+    ): PaymentResponse {
+        ownedTransaction(id, merchantId)
+        paymentService.voidPayment(id)
+        return PaymentResponse.from(paymentService.getPaymentView(id))
+    }
+
     /**
      * Loads a transaction and asserts the authenticated merchant owns it.
      * A cross-merchant id is reported as not-found so the endpoint can't be

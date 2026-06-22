@@ -278,6 +278,26 @@ class PaymentService(
         }
     }
 
+    /**
+     * Cancels an uncaptured authorization, releasing the hold. The state machine
+     * permits VOIDED only from AUTHORIZED, so a partially/fully captured payment
+     * is rejected with InvalidStateTransitionException (refund is its path, not
+     * void). No ledger entries: an authorization is a hold, never posted to the
+     * ledger in this model, so there is nothing to reverse.
+     */
+    @Transactional
+    fun voidPayment(transactionId: UUID): Transaction {
+        MDC.putCloseable(MDC_TXN_ID, transactionId.toString()).use {
+            val transaction = findTransaction(transactionId)
+            val from = transaction.status
+            transaction.transitionTo(PaymentStatus.VOIDED)
+            val saved = transactionRepository.save(transaction)
+            recordTransition(saved.id, from, PaymentStatus.VOIDED)
+            meterRegistry.counter("payments.voided", "currency", transaction.currency).increment()
+            return saved
+        }
+    }
+
     fun getPayment(transactionId: UUID): Transaction {
         return findTransaction(transactionId)
     }

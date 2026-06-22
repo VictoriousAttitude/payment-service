@@ -35,6 +35,19 @@ interface TransactionRepository : JpaRepository<Transaction, UUID> {
     """)
     fun findSettlable(cutoff: Instant, pageable: Pageable): List<Transaction>
 
+    /**
+     * Authorizations past their validity window with no capture: their hold has
+     * lapsed and they are due for expiry. updatedAt is the authorization time for
+     * an AUTHORIZED row (its last write), so it doubles as the expiry clock.
+     */
+    @Query("""
+        SELECT t FROM Transaction t
+        WHERE t.status = com.paymentservice.payment.PaymentStatus.AUTHORIZED
+        AND t.updatedAt <= :cutoff
+        ORDER BY t.updatedAt ASC
+    """)
+    fun findExpirableAuthorizations(cutoff: Instant, pageable: Pageable): List<Transaction>
+
     // NOT EXISTS, not NOT IN: a NULL transactionId in the subquery would make
     // NOT IN evaluate to UNKNOWN and silently return zero rows, masking the very
     // data-integrity gaps this query exists to find.
