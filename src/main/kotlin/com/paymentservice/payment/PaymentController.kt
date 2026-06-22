@@ -1,5 +1,6 @@
 package com.paymentservice.payment
 
+import com.paymentservice.payment.dto.CaptureRefundRequest
 import com.paymentservice.payment.dto.CreatePaymentRequest
 import com.paymentservice.payment.dto.PaymentResponse
 import com.paymentservice.shared.MERCHANT_ID_ATTRIBUTE
@@ -42,25 +43,32 @@ class PaymentController(
         @RequestAttribute(MERCHANT_ID_ATTRIBUTE) merchantId: UUID,
         @PathVariable id: UUID
     ): PaymentResponse {
-        return PaymentResponse.from(ownedTransaction(id, merchantId))
+        ownedTransaction(id, merchantId)
+        return PaymentResponse.from(paymentService.getPaymentView(id))
     }
 
     @PostMapping("/{id}/capture")
     fun capturePayment(
         @RequestAttribute(MERCHANT_ID_ATTRIBUTE) merchantId: UUID,
-        @PathVariable id: UUID
+        @PathVariable id: UUID,
+        @RequestHeader(name = "Idempotency-Key", required = false) idempotencyKey: String?,
+        @Valid @RequestBody(required = false) body: CaptureRefundRequest?
     ): PaymentResponse {
         ownedTransaction(id, merchantId)
-        return PaymentResponse.from(paymentService.capturePayment(id))
+        paymentService.capturePayment(id, body?.amount, idempotencyKey)
+        return PaymentResponse.from(paymentService.getPaymentView(id))
     }
 
     @PostMapping("/{id}/refund")
     fun refundPayment(
         @RequestAttribute(MERCHANT_ID_ATTRIBUTE) merchantId: UUID,
-        @PathVariable id: UUID
+        @PathVariable id: UUID,
+        @RequestHeader(name = "Idempotency-Key", required = false) idempotencyKey: String?,
+        @Valid @RequestBody(required = false) body: CaptureRefundRequest?
     ): PaymentResponse {
         ownedTransaction(id, merchantId)
-        return PaymentResponse.from(paymentService.refundPayment(id))
+        paymentService.refundPayment(id, body?.amount, idempotencyKey)
+        return PaymentResponse.from(paymentService.getPaymentView(id))
     }
 
     /**

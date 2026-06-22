@@ -4,6 +4,7 @@ import com.paymentservice.ledger.LedgerImbalanceException
 import com.paymentservice.merchant.MerchantNotActiveException
 import com.paymentservice.merchant.MerchantNotFoundException
 import com.paymentservice.payment.IdempotencyKeyReuseException
+import com.paymentservice.payment.InvalidPaymentAmountException
 import com.paymentservice.payment.InvalidStateTransitionException
 import com.paymentservice.payment.TransactionNotFoundException
 import com.paymentservice.shared.ErrorResponse
@@ -63,6 +64,16 @@ class GlobalExceptionHandler {
     fun handleIdempotencyKeyReuse(e: IdempotencyKeyReuseException): ResponseEntity<ErrorResponse> {
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(
             ErrorResponse("IDEMPOTENCY_KEY_REUSE", e.message ?: "Idempotency key reused with a different payload")
+        )
+    }
+
+    // 422: a syntactically valid capture/refund amount that breaks a domain
+    // bound (over-capture, over-refund, nothing left). Not a 400 — the request
+    // is well-formed; it's the state that makes it unprocessable.
+    @ExceptionHandler(InvalidPaymentAmountException::class)
+    fun handleInvalidAmount(e: InvalidPaymentAmountException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(
+            ErrorResponse("INVALID_PAYMENT_AMOUNT", e.message ?: "Invalid payment amount")
         )
     }
 

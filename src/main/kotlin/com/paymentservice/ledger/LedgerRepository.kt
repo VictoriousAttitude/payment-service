@@ -58,6 +58,33 @@ interface LedgerRepository : JpaRepository<LedgerEntry, UUID> {
                SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE 0 END)
     """)
     fun findUnbalancedTransactions(): List<UUID>
+
+    /**
+     * Total captured: the INCOMING DEBIT leg is posted once per capture for the
+     * captured amount, so its running sum is the amount captured to date. This
+     * derives the remaining-capturable headroom for partial/multi-capture.
+     */
+    @Query("""
+        SELECT COALESCE(SUM(le.amount), 0)
+        FROM LedgerEntry le
+        WHERE le.transactionId = :transactionId
+        AND le.accountType = com.paymentservice.ledger.AccountType.INCOMING
+        AND le.entryType = com.paymentservice.ledger.EntryType.DEBIT
+    """)
+    fun sumCaptured(transactionId: UUID): Long
+
+    /**
+     * Total refunded: the OUTGOING CREDIT leg is posted once per refund for the
+     * refunded amount, so its running sum is the amount refunded to date.
+     */
+    @Query("""
+        SELECT COALESCE(SUM(le.amount), 0)
+        FROM LedgerEntry le
+        WHERE le.transactionId = :transactionId
+        AND le.accountType = com.paymentservice.ledger.AccountType.OUTGOING
+        AND le.entryType = com.paymentservice.ledger.EntryType.CREDIT
+    """)
+    fun sumRefunded(transactionId: UUID): Long
 }
 
 /**

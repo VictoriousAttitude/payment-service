@@ -118,6 +118,12 @@ class LedgerService(
         return ledgerRepository.findByTransactionId(transactionId)
     }
 
+    /** Amount captured to date, derived from the ledger (source of truth). */
+    fun capturedTotal(transactionId: UUID): Long = ledgerRepository.sumCaptured(transactionId)
+
+    /** Amount refunded to date, derived from the ledger (source of truth). */
+    fun refundedTotal(transactionId: UUID): Long = ledgerRepository.sumRefunded(transactionId)
+
     private fun validateBalance(entries: List<LedgerEntry>) {
         val totalDebits = entries.filter { it.entryType == EntryType.DEBIT }.sumOf { it.amount }
         val totalCredits = entries.filter { it.entryType == EntryType.CREDIT }.sumOf { it.amount }

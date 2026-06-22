@@ -1,7 +1,6 @@
 package com.paymentservice.reconciliation
 
 import com.paymentservice.ledger.CurrencyBalance
-import com.paymentservice.ledger.EntryType
 import com.paymentservice.ledger.LedgerRepository
 import com.paymentservice.payment.PaymentStatus
 import com.paymentservice.payment.Transaction
@@ -24,8 +23,10 @@ class ReconciliationService(
             PaymentStatus.AUTHORIZED
         )
         private val STATUSES_REQUIRING_LEDGER = setOf(
+            PaymentStatus.PARTIALLY_CAPTURED,
             PaymentStatus.CAPTURED,
             PaymentStatus.SETTLED,
+            PaymentStatus.PARTIALLY_REFUNDED,
             PaymentStatus.REFUNDED
         )
     }
@@ -59,23 +60,16 @@ class ReconciliationService(
     }
 
     /**
-     * Q3c: Is the data present exactly once?
-     * Finds transactions whose ledger debit total does not match the expected
-     * amount. A duplicated capture entry set is balanced per-transaction and
-     * globally — debit==credit checks are blind to it. Comparing entry totals
-     * against the source-of-truth transaction amount is the only check that
-     * catches duplication.
+     * Q3c: Is the data present exactly once, within bounds?
+     * Finds transactions whose ledger totals violate the partial-capture/refund
+     * invariants: captured <= authorized amount, refunded <= captured. A
+     * duplicated capture set (or runaway refund) is balanced per-transaction and
+     * globally — debit==credit checks are blind to it. Comparing the derived
+     * captured/refunded totals against the source-of-truth amount is the only
+     * check that catches it.
      */
     fun findTransactionsWithMismatchedAmounts(): List<UUID> {
-        // CAPTURED/SETTLED: one capture set debits exactly `amount`
-        val captured = transactionRepository.findWithMismatchedDebitTotal(
-            setOf(PaymentStatus.CAPTURED, PaymentStatus.SETTLED), 1L, EntryType.DEBIT
-        )
-        // REFUNDED: capture set + refund set each debit `amount` -> 2x
-        val refunded = transactionRepository.findWithMismatchedDebitTotal(
-            setOf(PaymentStatus.REFUNDED), 2L, EntryType.DEBIT
-        )
-        return captured + refunded
+        return transactionRepository.findAmountInvariantViolations(STATUSES_REQUIRING_LEDGER)
     }
 
     /**

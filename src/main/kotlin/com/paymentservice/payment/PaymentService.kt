@@ -22,6 +22,7 @@ class PaymentService(
     private val ledgerService: LedgerService,
     private val paymentCreator: PaymentCreator,
     private val transactionEventRepository: TransactionEventRepository,
+    private val paymentOperationRepository: PaymentOperationRepository,
     private val meterRegistry: MeterRegistry
 ) {
 
@@ -150,26 +151,63 @@ class PaymentService(
      * Layer 2 (Core): capture is the critical financial operation.
      * Status change + ledger entries in ONE database transaction.
      * Both succeed or both rollback. No partial state possible.
+     *
+     * Supports partial and multi-capture: [amount] null captures the full
+     * remaining authorized headroom; a value captures that much, up to the
+     * remaining. Captured-to-date is derived from the ledger (source of truth),
+     * never from a mutable counter. The transaction lands in CAPTURED once the
+     * running total reaches the authorized amount, otherwise PARTIALLY_CAPTURED.
+     * A non-null [idempotencyKey] makes a single capture safely retryable.
      */
     @Transactional
-    fun capturePayment(transactionId: UUID): Transaction {
+    fun capturePayment(
+        transactionId: UUID,
+        amount: Long? = null,
+        idempotencyKey: String? = null
+    ): Transaction {
         MDC.putCloseable(MDC_TXN_ID, transactionId.toString()).use {
             val transaction = findTransaction(transactionId)
 
-            // State machine validates AUTHORIZED → CAPTURED
+            // Replay: this exact capture already applied -> return current state.
+            if (idempotencyKey != null) {
+                paymentOperationRepository
+                    .findByTransactionIdAndIdempotencyKey(transactionId, idempotencyKey)
+                    ?.let { return transaction }
+            }
+
+            val capturedTotal = ledgerService.capturedTotal(transactionId)
+            val remaining = transaction.amount - capturedTotal
+            val captureAmount = amount ?: remaining
+
+            if (captureAmount <= 0 || captureAmount > remaining) {
+                throw InvalidPaymentAmountException(
+                    "Capture amount $captureAmount invalid; remaining capturable is $remaining"
+                )
+            }
+
             val from = transaction.status
-            transaction.transitionTo(PaymentStatus.CAPTURED)
+            val target = if (capturedTotal + captureAmount == transaction.amount)
+                PaymentStatus.CAPTURED else PaymentStatus.PARTIALLY_CAPTURED
+            transaction.transitionTo(target)
 
             // Ledger: create double-entry records (validates balance before persist)
             ledgerService.createCaptureEntries(
                 transactionId = transaction.id,
                 merchantId = transaction.merchantId,
-                amount = transaction.amount,
+                amount = captureAmount,
                 currency = transaction.currency
+            )
+            paymentOperationRepository.save(
+                PaymentOperation(
+                    transactionId = transactionId,
+                    type = OperationType.CAPTURE,
+                    amount = captureAmount,
+                    idempotencyKey = idempotencyKey
+                )
             )
 
             val saved = transactionRepository.save(transaction)
-            recordTransition(saved.id, from, PaymentStatus.CAPTURED)
+            recordTransition(saved.id, from, target)
             meterRegistry.counter("payments.captured", "currency", transaction.currency).increment()
             return saved
         }
@@ -178,26 +216,63 @@ class PaymentService(
     /**
      * Layer 2 (Core): refund reverses ledger entries.
      * Same atomic guarantee as capture.
+     *
+     * Supports partial refund: [amount] null refunds the full remaining
+     * captured-but-not-refunded balance; a value refunds that much, up to the
+     * remaining. Refunded-to-date is derived from the ledger. The transaction
+     * lands in REFUNDED once refunds equal the captured total, otherwise
+     * PARTIALLY_REFUNDED. A non-null [idempotencyKey] makes a single refund
+     * safely retryable.
      */
     @Transactional
-    fun refundPayment(transactionId: UUID): Transaction {
+    fun refundPayment(
+        transactionId: UUID,
+        amount: Long? = null,
+        idempotencyKey: String? = null
+    ): Transaction {
         MDC.putCloseable(MDC_TXN_ID, transactionId.toString()).use {
             val transaction = findTransaction(transactionId)
 
-            // State machine validates CAPTURED → REFUNDED
+            if (idempotencyKey != null) {
+                paymentOperationRepository
+                    .findByTransactionIdAndIdempotencyKey(transactionId, idempotencyKey)
+                    ?.let { return transaction }
+            }
+
+            val capturedTotal = ledgerService.capturedTotal(transactionId)
+            val refundedTotal = ledgerService.refundedTotal(transactionId)
+            val remaining = capturedTotal - refundedTotal
+            val refundAmount = amount ?: remaining
+
+            if (refundAmount <= 0 || refundAmount > remaining) {
+                throw InvalidPaymentAmountException(
+                    "Refund amount $refundAmount invalid; remaining refundable is $remaining"
+                )
+            }
+
             val from = transaction.status
-            transaction.transitionTo(PaymentStatus.REFUNDED)
+            val target = if (refundedTotal + refundAmount == capturedTotal)
+                PaymentStatus.REFUNDED else PaymentStatus.PARTIALLY_REFUNDED
+            transaction.transitionTo(target)
 
             // Ledger: create reverse entries (validates balance before persist)
             ledgerService.createRefundEntries(
                 transactionId = transaction.id,
                 merchantId = transaction.merchantId,
-                amount = transaction.amount,
+                amount = refundAmount,
                 currency = transaction.currency
+            )
+            paymentOperationRepository.save(
+                PaymentOperation(
+                    transactionId = transactionId,
+                    type = OperationType.REFUND,
+                    amount = refundAmount,
+                    idempotencyKey = idempotencyKey
+                )
             )
 
             val saved = transactionRepository.save(transaction)
-            recordTransition(saved.id, from, PaymentStatus.REFUNDED)
+            recordTransition(saved.id, from, target)
             meterRegistry.counter("payments.refunded", "currency", transaction.currency).increment()
             return saved
         }
@@ -205,6 +280,20 @@ class PaymentService(
 
     fun getPayment(transactionId: UUID): Transaction {
         return findTransaction(transactionId)
+    }
+
+    /**
+     * Read model with the captured/refunded breakdown derived from the ledger.
+     * The transaction row carries only the lifecycle label; the amounts come
+     * from the entries so the view can never disagree with the money.
+     */
+    fun getPaymentView(transactionId: UUID): PaymentView {
+        val transaction = findTransaction(transactionId)
+        return PaymentView(
+            transaction = transaction,
+            capturedAmount = ledgerService.capturedTotal(transactionId),
+            refundedAmount = ledgerService.refundedTotal(transactionId)
+        )
     }
 
     fun getHistory(transactionId: UUID): List<TransactionEvent> {
@@ -247,9 +336,21 @@ enum class CallbackOutcome {
     IGNORED_LATE
 }
 
+/**
+ * Read model: the transaction plus its captured/refunded totals, both derived
+ * from the ledger rather than stored on the row.
+ */
+data class PaymentView(
+    val transaction: Transaction,
+    val capturedAmount: Long,
+    val refundedAmount: Long
+)
+
 // Domain exceptions
 class TransactionNotFoundException(val transactionId: UUID) :
     RuntimeException("Transaction not found: $transactionId")
 
 class IdempotencyKeyReuseException(val idempotencyKey: String) :
     RuntimeException("Idempotency key reused with a different payload: $idempotencyKey")
+
+class InvalidPaymentAmountException(message: String) : RuntimeException(message)

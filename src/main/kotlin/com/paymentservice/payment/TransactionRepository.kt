@@ -1,6 +1,5 @@
 package com.paymentservice.payment
 
-import com.paymentservice.ledger.EntryType
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
@@ -47,23 +46,35 @@ interface TransactionRepository : JpaRepository<Transaction, UUID> {
     fun findWithoutLedgerEntries(statuses: Collection<PaymentStatus>): List<Transaction>
 
     /**
-     * Finds transactions whose total ledger debits do not match the expected
-     * multiple of the transaction amount (1x for captured, 2x for refunded —
-     * capture set + refund set each debit the full amount).
-     * Catches duplicated entry sets that are individually balanced and thus
-     * invisible to debit==credit checks.
+     * Finds transactions that violate the partial-capture/refund money
+     * invariants, derived from the ledger:
+     *   captured (sum of INCOMING DEBIT)  <= authorized amount, and
+     *   refunded (sum of OUTGOING CREDIT) <= captured.
+     * A duplicated capture set pushes captured past the amount; a runaway refund
+     * pushes refunded past captured. Both are balanced per-transaction (debit ==
+     * credit) and so invisible to the imbalance check — this is the only check
+     * that compares entry totals against the source-of-truth amount and against
+     * each other.
      */
     @Query("""
         SELECT t.id FROM Transaction t
         WHERE t.status IN :statuses
-        AND (t.amount * :multiplier) <>
-            (SELECT COALESCE(SUM(le.amount), 0)
-             FROM LedgerEntry le
-             WHERE le.transactionId = t.id AND le.entryType = :entryType)
+        AND (
+            (SELECT COALESCE(SUM(le.amount), 0) FROM LedgerEntry le
+             WHERE le.transactionId = t.id
+             AND le.accountType = com.paymentservice.ledger.AccountType.INCOMING
+             AND le.entryType = com.paymentservice.ledger.EntryType.DEBIT) > t.amount
+            OR
+            (SELECT COALESCE(SUM(le.amount), 0) FROM LedgerEntry le
+             WHERE le.transactionId = t.id
+             AND le.accountType = com.paymentservice.ledger.AccountType.OUTGOING
+             AND le.entryType = com.paymentservice.ledger.EntryType.CREDIT)
+            >
+            (SELECT COALESCE(SUM(le2.amount), 0) FROM LedgerEntry le2
+             WHERE le2.transactionId = t.id
+             AND le2.accountType = com.paymentservice.ledger.AccountType.INCOMING
+             AND le2.entryType = com.paymentservice.ledger.EntryType.DEBIT)
+        )
     """)
-    fun findWithMismatchedDebitTotal(
-        statuses: Collection<PaymentStatus>,
-        multiplier: Long,
-        entryType: EntryType
-    ): List<UUID>
+    fun findAmountInvariantViolations(statuses: Collection<PaymentStatus>): List<UUID>
 }

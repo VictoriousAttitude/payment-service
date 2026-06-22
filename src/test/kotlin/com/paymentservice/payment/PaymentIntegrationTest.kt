@@ -226,8 +226,8 @@ class PaymentIntegrationTest {
         paymentService.handleProviderCallback(txn.id, authorized = true, providerReference = "ref")
         paymentService.capturePayment(txn.id)
 
-        // second capture must fail
-        org.junit.jupiter.api.assertThrows<InvalidStateTransitionException> {
+        // second capture must fail: nothing left to capture (remaining is 0)
+        org.junit.jupiter.api.assertThrows<InvalidPaymentAmountException> {
             paymentService.capturePayment(txn.id)
         }
     }
@@ -256,12 +256,13 @@ class PaymentIntegrationTest {
         executor.shutdown()
 
         // exactly one capture must fail: either optimistic lock conflict
-        // (true race) or state guard (loser read after winner committed)
+        // (true race) or, if the loser reads after the winner commits, the
+        // amount guard (no capturable headroom left -> InvalidPaymentAmount)
         val failures = outcomes.filterNotNull()
         assertEquals(1, failures.size, "exactly one capture must fail, got: $outcomes")
         val failure = failures.single()
         assertTrue(
-            failure is OptimisticLockingFailureException || failure is InvalidStateTransitionException,
+            failure is OptimisticLockingFailureException || failure is InvalidPaymentAmountException,
             "unexpected failure type: $failure"
         )
 
