@@ -8,3 +8,5 @@ __pycache__/
 *.prom
 *.egg-info/
 dist/
+mutants/
+.mutmut-cache
