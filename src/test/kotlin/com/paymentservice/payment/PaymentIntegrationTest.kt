@@ -19,6 +19,7 @@ import org.springframework.test.context.ActiveProfiles
 import java.util.UUID
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.Executors
+import javax.sql.DataSource
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -40,6 +41,7 @@ class PaymentIntegrationTest {
     @Autowired lateinit var transactionRepository: TransactionRepository
     @Autowired lateinit var reconciliationService: ReconciliationService
     @Autowired lateinit var outboxDispatcher: OutboxDispatcher
+    @Autowired lateinit var dataSource: DataSource
 
     private val merchantId = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11") // seeded in V1
 
@@ -280,19 +282,14 @@ class PaymentIntegrationTest {
         paymentService.handleProviderCallback(txn.id, authorized = true, providerReference = "ref")
         paymentService.capturePayment(txn.id)
 
-        // simulate the double-capture bug: a second balanced capture entry set
-        val duplicates = ledgerService.getEntriesForTransaction(txn.id).map {
-            LedgerEntry(
-                transactionId = it.transactionId,
-                accountType = it.accountType,
-                accountId = it.accountId,
-                entryType = it.entryType,
-                amount = it.amount,
-                currency = it.currency,
-                description = "duplicate"
-            )
-        }
-        ledgerRepository.saveAll(duplicates)
+        // Simulate the double-capture bug as a second balanced capture entry set.
+        // The V17 ceiling constraint trigger rejects this at COMMIT through the
+        // normal write path, so we inject it the only way such corruption can
+        // actually reach a production ledger: with triggers disabled. This models
+        // exactly the trigger-bypassing classes reconciliation exists to catch -
+        // a direct-SQL hotfix, a logical-replication apply, a row predating the
+        // constraint. Reconciliation is the backstop the in-DB invariants cannot be.
+        injectEntriesBypassingTriggers(ledgerService.getEntriesForTransaction(txn.id))
 
         // debit==credit checks are blind: the duplicate set balances
         assertFalse(txn.id in reconciliationService.findUnbalancedTransactions())
@@ -300,6 +297,42 @@ class PaymentIntegrationTest {
 
         // amount check catches it: debits sum to 2x transaction amount
         assertTrue(txn.id in reconciliationService.findTransactionsWithMismatchedAmounts())
+    }
+
+    /**
+     * Commits a duplicate of each entry with triggers disabled for this
+     * transaction. session_replication_role = replica skips origin triggers
+     * (the V15 balance check and the V17 ceiling check among them), which is the
+     * standard Postgres mechanism for the exact corruption reconciliation guards
+     * against: a set that entered the ledger outside the application's write path.
+     */
+    private fun injectEntriesBypassingTriggers(entries: List<LedgerEntry>) {
+        dataSource.connection.use { conn ->
+            conn.autoCommit = false
+            conn.createStatement().use { it.execute("SET LOCAL session_replication_role = replica") }
+            conn.prepareStatement(
+                """
+                INSERT INTO ledger_entries
+                  (id, transaction_id, account_type, account_id, entry_type,
+                   amount, currency, description, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, now())
+                """
+            ).use { ps ->
+                for (e in entries) {
+                    ps.setObject(1, UUID.randomUUID())
+                    ps.setObject(2, e.transactionId)
+                    ps.setString(3, e.accountType.name)
+                    ps.setObject(4, e.accountId)
+                    ps.setString(5, e.entryType.name)
+                    ps.setLong(6, e.amount)
+                    ps.setString(7, e.currency)
+                    ps.setString(8, "duplicate")
+                    ps.addBatch()
+                }
+                ps.executeBatch()
+            }
+            conn.commit()
+        }
     }
 
 
