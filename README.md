@@ -1,8 +1,30 @@
 # payment-service
 
+![CI](https://github.com/VictoriousAttitude/payment-service/actions/workflows/ci.yml/badge.svg)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
+
 A payment processing service built around a double-entry ledger as the source of truth, with a 3-layer safety model inspired by [Stripe's money movement validation architecture](https://stripe.com/blog/payment-api-design).
 
 Kotlin, Spring Boot 3, PostgreSQL. It's not a blueprint. I am just providing my thinking process here.
+
+## ledger integrity: defense in depth
+
+Correctness of the money is enforced at four independent layers, so a fault that slips one layer is still caught by the next. This is the core idea of the project.
+
+```mermaid
+flowchart TB
+    write["money movement<br/>capture, refund, chargeback"]
+    app["1 application invariants<br/>validateBalance, debits equal credits<br/>state machine guards, in code ceilings"]
+    pg[("PostgreSQL<br/>2 constraint triggers at commit<br/>append only V7 V11, balance V15<br/>terminal absorbing V16, ceiling V17")]
+    recon["3 scheduled reconciliation oracle<br/>per currency and global balance<br/>amount invariant sweep"]
+    oracle["4 external oracle in Python<br/>ledger vs processor settlement<br/>three way reconciliation"]
+
+    write --> app --> pg
+    pg --> recon
+    pg --> oracle
+```
+
+Layer 1 rejects a bad write before it is sent. Layer 2 makes a bad write impossible to commit, enforced in the database below the application. Layer 3 sweeps the committed ledger on a schedule for any anomaly the first two missed. Layer 4 compares the ledger against the processor settlement file, the one input that is genuinely independent of this codebase.
 
 ## architecture
 
@@ -85,6 +107,14 @@ Amounts are stored as `BIGINT` minor units (never floats). Fees are basis points
 | Testcontainers, not H2 | H2 differs from PostgreSQL on JSONB, triggers, partial indexes, constraints |
 | state machine in enum | compile-time exhaustive checks; you can't add a state without defining its transitions |
 | Spring Modulith boundaries | `ApplicationModules.verify()` fails the build on a module cycle or cross-module access of internal types |
+
+## answering the obvious objections
+
+**Why Camunda for a single deadline.** The dispute evidence deadline is a durable timer measured in days that must survive restarts, carry an auditable history, and drive a state transition when it fires. A scheduled sweep over a deadline column does the same job with far less weight, and for one timer that would be the proportionate choice. Camunda earns its place only once the dispute workflow grows into the multi step process it models in real acquiring: evidence submission, representment, arbitration, each with its own timer and compensation. This repo ships the first slice of that process and uses the engine to keep the timeline explicit and durable rather than implicit in a cron column. If the workflow never grows, swap it for a scheduled sweep. The tradeoff is stated, not hidden.
+
+**Why hand rolled API key auth instead of Spring Security.** Authentication here is one lookup of a hashed, indexed key plus an ownership predicate on every read and write. A thin `OncePerRequestFilter` expresses exactly that, in code a reader can audit in a minute, where Spring Security would add a large configuration surface for a model that needs none of its filter chain. Keys are SHA 256 hashed at rest and resolved by an indexed unique lookup, never compared in plaintext. The cost is that rate limiting, key rotation, and scopes are not free the way they would be under a framework, and those are listed in the production gaps rather than pretended away.
+
+**Why a Python package inside a Kotlin service.** A reconciliation oracle must be independent of the code that writes the ledger, or a bug in the writer can hide inside the checker. Knight and Leveson showed in 1986 that independently written implementations of the same specification still fail in correlated ways, so a self check mostly catches transcription faults that a unit test already covers. The one genuinely independent input is the settlement file from the processor, so the oracle that compares the ledger against it lives as a separate zero dependency Python package with its own property tests and a one hundred percent mutation kill. A different language keeps it physically and operationally separate from the service it audits. The cost is a second toolchain in the repo, which is the price of that independence.
 
 ## modules
 
@@ -170,15 +200,12 @@ src/main/kotlin/com/paymentservice/
 ## running locally
 
 ```bash
-# start postgresql
-docker compose up -d
+# full stack: builds the image, starts postgresql and the service together
+docker compose up --build
 
-# run the service
+# or, for development, start only postgresql and run the app from gradle
+docker compose up -d db
 ./gradlew bootRun
-
-# or with docker
-docker build -t payment-service .
-docker run --network host payment-service
 ```
 
 ## quick test

@@ -32,6 +32,14 @@ class WebhookSignerTest {
     }
 
     @Test
+    fun `isValid rejects a header with a timestamp but no signature`() {
+        // a fresh, well formed timestamp but no v1 field: the signature is
+        // mandatory, so verification must fail before any HMAC comparison
+        val header = "t=${Instant.now().epochSecond}"
+        assertFalse(signer.isValid("""{"amount":1000}""", header))
+    }
+
+    @Test
     fun `different secrets produce non-matching signatures`() {
         val other = WebhookSigner("other-secret")
         val body = """{"amount":1000}"""

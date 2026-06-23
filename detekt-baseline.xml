@@ -1,0 +1,44 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues></ManuallySuppressedIssues>
+  <CurrentIssues>
+    <ID>EmptyFunctionBlock:PaymentServiceApplicationTests.kt$PaymentServiceApplicationTests${ }</ID>
+    <ID>LongParameterList:Dispute.kt$Dispute$( @Id val id: UUID = UUID.randomUUID(), @Column(name = "transaction_id", nullable = false) val transactionId: UUID, @Column(nullable = false) @Enumerated(EnumType.STRING) val reason: DisputeReason, @Column(nullable = false) val amount: Long, @Column(nullable = false, length = 3) val currency: String, @Column(nullable = false) @Enumerated(EnumType.STRING) var status: DisputeStatus = DisputeStatus.OPEN, @Column(name = "provider_reference") val providerReference: String? = null, @Column(name = "created_at", nullable = false, updatable = false) val createdAt: Instant = Instant.now(), @Column(name = "updated_at", nullable = false) var updatedAt: Instant = Instant.now(), @Version @Column(nullable = false) var version: Long = 0 )</ID>
+    <ID>LongParameterList:LedgerEntry.kt$LedgerEntry$( @Id val id: UUID = UUID.randomUUID(), @Column(name = "transaction_id", nullable = false) val transactionId: UUID, @Column(name = "account_type", nullable = false) @Enumerated(EnumType.STRING) val accountType: AccountType, @Column(name = "account_id", nullable = false) val accountId: UUID, @Column(name = "entry_type", nullable = false) @Enumerated(EnumType.STRING) val entryType: EntryType, @Column(nullable = false) val amount: Long, @Column(nullable = false, length = 3) val currency: String, val description: String? = null, @Column(name = "created_at", nullable = false, updatable = false) val createdAt: Instant = Instant.now() // NO updatedAt: ledger entries are immutable )</ID>
+    <ID>LongParameterList:Merchant.kt$Merchant$( @Id val id: UUID = UUID.randomUUID(), @Column(nullable = false) val name: String, val email: String? = null, // SHA-256 hex of the raw key; the plaintext key is never stored at rest. @Column(name = "api_key_hash", nullable = false, unique = true) val apiKeyHash: String, @Column(nullable = false) @Enumerated(EnumType.STRING) var status: MerchantStatus = MerchantStatus.ACTIVE, @Column(name = "created_at", nullable = false, updatable = false) val createdAt: Instant = Instant.now(), @Column(name = "updated_at", nullable = false) var updatedAt: Instant = Instant.now() )</ID>
+    <ID>LongParameterList:OutboxEvent.kt$OutboxEvent$( @Id val id: UUID = UUID.randomUUID(), @Column(name = "aggregate_id", nullable = false) val aggregateId: UUID, @Column(nullable = false) val type: String, @Column(nullable = false) @Enumerated(EnumType.STRING) var status: OutboxStatus = OutboxStatus.PENDING, @Column(nullable = false) var attempts: Int = 0, @Column(name = "last_error") var lastError: String? = null, @Column(name = "created_at", nullable = false, updatable = false) val createdAt: Instant = Instant.now(), @Column(name = "updated_at", nullable = false) var updatedAt: Instant = Instant.now(), @Column(name = "dispatched_at") var dispatchedAt: Instant? = null, @Column(name = "next_attempt_at", nullable = false) var nextAttemptAt: Instant = Instant.now() )</ID>
+    <ID>LongParameterList:PaymentService.kt$PaymentService$( private val transactionRepository: TransactionRepository, private val merchantRepository: MerchantRepository, private val ledgerService: LedgerService, private val paymentCreator: PaymentCreator, private val transactionEventRepository: TransactionEventRepository, private val paymentOperationRepository: PaymentOperationRepository, private val meterRegistry: MeterRegistry )</ID>
+    <ID>LongParameterList:Transaction.kt$Transaction$( @Id val id: UUID = UUID.randomUUID(), @Column(name = "merchant_id", nullable = false) val merchantId: UUID, @Column(name = "idempotency_key", nullable = false) val idempotencyKey: String, /** * SHA-256 of the canonical request payload. Detects idempotency key reuse * with a different payload (client bug, not a retry). Empty for rows * created before fingerprinting was introduced. */ @Column(name = "request_hash", nullable = false, length = 64) val requestHash: String = "", @Column(nullable = false) val amount: Long, @Column(nullable = false, length = 3) val currency: String, @Column(nullable = false) @Enumerated(EnumType.STRING) var status: PaymentStatus = PaymentStatus.CREATED, @JdbcTypeCode(SqlTypes.JSON) @Column(name = "payment_method", columnDefinition = "jsonb") var paymentMethod: String? = null, @Column(name = "provider_reference") var providerReference: String? = null, @Column(name = "failure_reason") var failureReason: String? = null, val description: String? = null, @Column(name = "created_at", nullable = false, updatable = false) val createdAt: Instant = Instant.now(), @Column(name = "updated_at", nullable = false) var updatedAt: Instant = Instant.now(), /** * Optimistic lock. The state machine validates transitions in memory; * this enforces them against concurrent writers at the DB level. * Concurrent capture: loser's UPDATE matches 0 rows -&gt; whole transaction * (including its ledger inserts) rolls back. */ @Version @Column(nullable = false) var version: Long = 0 )</ID>
+    <ID>MagicNumber:LedgerService.kt$LedgerService.Companion$10_000</ID>
+    <ID>MagicNumber:OutboxEvent.kt$OutboxEvent$1000</ID>
+    <ID>MagicNumber:PaymentProviderSimulator.kt$PaymentProviderSimulator$0.1</ID>
+    <ID>MagicNumber:PaymentProviderSimulator.kt$PaymentProviderSimulator$500</ID>
+    <ID>MagicNumber:PaymentProviderSimulator.kt$PaymentProviderSimulator$8</ID>
+    <ID>MagicNumber:ReconciliationService.kt$ReconciliationService$30</ID>
+    <ID>ReturnCount:AuthorizationExpiryProcessor.kt$AuthorizationExpiryProcessor$@Transactional fun expire(transactionId: UUID): String?</ID>
+    <ID>ReturnCount:PaymentService.kt$PaymentService$private fun applyProviderCallback( transactionId: UUID, authorized: Boolean, providerReference: String? ): CallbackOutcome</ID>
+    <ID>ReturnCount:SettlementProcessor.kt$SettlementProcessor$@Transactional fun settle(transactionId: UUID): String?</ID>
+    <ID>ReturnCount:WebhookSigner.kt$WebhookSigner$fun isValid(body: String, header: String): Boolean</ID>
+    <ID>SpreadOperator:PaymentServiceApplication.kt$(*args)</ID>
+    <ID>TooGenericExceptionCaught:AuthorizationExpiryBatch.kt$AuthorizationExpiryBatch$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:OutboxDispatcher.kt$OutboxDispatcher$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:PaymentProviderSimulator.kt$PaymentProviderSimulator$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:SettlementBatch.kt$SettlementBatch$e: Exception</ID>
+    <ID>TooManyFunctions:GlobalExceptionHandler.kt$GlobalExceptionHandler</ID>
+    <ID>TooManyFunctions:PaymentService.kt$PaymentService</ID>
+    <ID>UnusedParameter:GlobalExceptionHandler.kt$GlobalExceptionHandler$e: OptimisticLockingFailureException</ID>
+    <ID>UnusedPrivateProperty:ProviderCallbackClient.kt$ProviderCallbackClient$private val log = LoggerFactory.getLogger(javaClass)</ID>
+    <ID>WildcardImport:Dispute.kt$import jakarta.persistence.*</ID>
+    <ID>WildcardImport:DisputeController.kt$import org.springframework.web.bind.annotation.*</ID>
+    <ID>WildcardImport:LedgerEntry.kt$import jakarta.persistence.*</ID>
+    <ID>WildcardImport:Merchant.kt$import jakarta.persistence.*</ID>
+    <ID>WildcardImport:MerchantController.kt$import org.springframework.web.bind.annotation.*</ID>
+    <ID>WildcardImport:OutboxEvent.kt$import jakarta.persistence.*</ID>
+    <ID>WildcardImport:PaymentController.kt$import org.springframework.web.bind.annotation.*</ID>
+    <ID>WildcardImport:PaymentOperation.kt$import jakarta.persistence.*</ID>
+    <ID>WildcardImport:ReconciliationController.kt$import org.springframework.web.bind.annotation.*</ID>
+    <ID>WildcardImport:Transaction.kt$import jakarta.persistence.*</ID>
+    <ID>WildcardImport:TransactionEvent.kt$import jakarta.persistence.*</ID>
+    <ID>WildcardImport:WebhookController.kt$import org.springframework.web.bind.annotation.*</ID>
+  </CurrentIssues>
+</SmellBaseline>

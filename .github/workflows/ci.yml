@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  jvm:
+    name: jvm (detekt, test, pitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: set up jdk 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: make gradlew executable
+        run: chmod +x gradlew
+
+      # test runs the full Testcontainers suite and ModularityTest (module
+      # boundary verification); detekt enforces static analysis against a
+      # baseline; pitest mutation tests the pure money and security core.
+      - name: detekt, test, pitest
+        run: ./gradlew detekt test pitest --no-daemon
+
+      - name: upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jvm-reports
+          path: |
+            build/reports/tests/test
+            build/reports/pitest
+            build/reports/detekt
+          if-no-files-found: ignore
+
+  python-recon:
+    name: python recon (ruff, mypy, pytest, mutmut)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: recon
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: set up python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: install dev tools
+        run: pip install pytest hypothesis mypy ruff mutmut
+
+      - name: ruff
+        run: ruff check .
+
+      - name: mypy
+        run: mypy
+
+      - name: pytest
+        run: pytest -q
+
+      # the reconciliation core claims to be provable; the mutation run proves
+      # the tests actually kill injected faults. any survivor fails the build.
+      - name: mutation testing (zero survivors)
+        run: |
+          mutmut run
+          mutmut results
+          if mutmut results | grep -qE ': survived'; then
+            echo "::error::surviving mutants found in the reconciliation core"
+            exit 1
+          fi
