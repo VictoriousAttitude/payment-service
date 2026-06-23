@@ -186,10 +186,11 @@ src/main/kotlin/com/paymentservice/
 
 ## testing
 
-12 test classes, 57 tests, all green. Integration tests run against real PostgreSQL via Testcontainers.
+21 test classes, 147 tests, all green. Integration tests run against real PostgreSQL via Testcontainers.
 
-- **unit**: state machine transitions/terminals (`PaymentStatusTest`), fee rounding direction (`LedgerFeeTest`), HMAC signing + replay window (`WebhookSignerTest`), module boundaries (`ModularityTest`)
-- **integration**: full lifecycle + ledger/balance math, idempotency + concurrent double-capture (409), outbox concurrency (one winner via `SKIP LOCKED`) + backoff/dead-letter, signed-webhook acceptance/rejection, settlement, append-only history immutability, auth + ownership (401/403/404), reconciliation, prometheus counters
+- **unit**: state machine transitions/terminals (`PaymentStatusTest`), fee rounding direction (`LedgerFeeTest`), HMAC signing + replay window (`WebhookSignerTest`), dispute state machine (`DisputeStatusTest`), module boundaries (`ModularityTest`)
+- **integration**: full lifecycle + ledger/balance math, idempotency + concurrent double-capture (409), partial and multi capture with partial refund, authorization void and expiry, disputes and chargebacks with ledger clawback, outbox concurrency (one winner via `SKIP LOCKED`) + backoff/dead-letter, signed-webhook acceptance/rejection, settlement, append-only history immutability, the deferred balance/terminal/ceiling constraint triggers, provider retry and circuit breaker, auth + ownership (401/403/404), reconciliation, prometheus counters
+- **mutation**: pitest over the money and security core (`./gradlew pitest`), and the Python recon core via `mutmut` with a zero survivor gate in CI
 
 ```bash
 ./gradlew test
@@ -239,13 +240,13 @@ The `/webhooks/provider-callback` endpoint requires a valid `X-Webhook-Signature
 
 ## database schema
 
-11 Flyway migrations (`hibernate.ddl-auto: validate` — Flyway owns the schema):
+17 Flyway migrations (`hibernate.ddl-auto: validate`, Flyway owns the schema):
 
 | migration | change |
 |-----------|--------|
 | `V1` | `merchants` + seeded test merchant |
-| `V2` | `transactions` — `UNIQUE(merchant_id, idempotency_key)`, BIGINT amounts, JSONB payment method |
-| `V3` | `ledger_entries` — immutable, CHECK constraints on amounts |
+| `V2` | `transactions`, `UNIQUE(merchant_id, idempotency_key)`, BIGINT amounts, JSONB payment method |
+| `V3` | `ledger_entries`, immutable, CHECK constraints on amounts |
 | `V4` | `version` column for optimistic locking |
 | `V5` | sha-256 `request_hash` for idempotency payload checks |
 | `V6` | `outbox_events` |
@@ -254,14 +255,18 @@ The `/webhooks/provider-callback` endpoint requires a valid `X-Webhook-Signature
 | `V9` | hash API keys at rest (pgcrypto), drop plaintext column |
 | `V10` | partial index for settlement-eligible (`CAPTURED`) rows |
 | `V11` | `transaction_events` append-only history + immutability trigger |
+| `V12` | `payment_operations` for partial/multi capture and partial refund, `UNIQUE(transaction_id, idempotency_key)` |
+| `V13` | authorization void/expiry support |
+| `V14` | `disputes` for chargeback lifecycle with ledger clawback |
+| `V15` | deferred constraint trigger: per-currency ledger balance at commit |
+| `V16` | deferred constraint trigger: terminal status is absorbing |
+| `V17` | deferred constraint trigger: captured never exceeds authorized, refunded never exceeds captured |
 
 ## production gaps / next steps
 
-This demonstrates the correctness and operability primitives; real card processing at a PSP would additionally require:
+This demonstrates the correctness and operability primitives. Real card processing at a PSP would additionally require:
 
-- **real acquirer/network integration** — the provider is a simulator; settlement is a state milestone only (no clearing entries, no acquirer settlement-file ingestion)
-- **external reconciliation** — current recon proves the ledger is self-consistent; it cannot catch a discrepancy where your books agree but disagree with the bank
-- **disputes/chargebacks, payouts/disbursement, reserves/holds** — entire flows not modelled
-- **PCI scope** — card tokenization/vaulting and **SCA/3DS** (PSD2) are absent
-- **domain depth** — partial/multi/incremental capture and partial refund (refund currently reverses the full amount); auth void/expiry
-- **scale/ops** — time-partitioning + archival for the append-only tables, distributed tracing, leader election for scheduled jobs, rate limiting, API-key rotation/scopes
+- **real acquirer/network integration**: the provider is a simulator. Settlement is a state milestone only, with no clearing entries and no acquirer settlement-file ingestion
+- **PCI scope**: card tokenization/vaulting and **SCA/3DS** (PSD2) are absent
+- **payouts/disbursement, reserves/holds**: merchant funding flows are not modelled
+- **scale/ops**: time-partitioning and archival for the append-only tables, distributed tracing, leader election for scheduled jobs, rate limiting, API-key rotation/scopes
