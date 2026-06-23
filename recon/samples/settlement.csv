@@ -1,0 +1,8 @@
+reference,reporting_category,currency,gross,fee
+ch_clean_eur,charge,EUR,100.00,2.00
+ch_clean_usd,charge,USD,250.00,5.00
+rf_partial_eur,refund,EUR,-30.00,0.00
+cb_dispute_eur,dispute,EUR,-100.00,15.00
+ch_fee_leak,charge,EUR,100.00,2.50
+ch_gross_mismatch,charge,EUR,75.00,1.60
+ch_unbooked,charge,EUR,500.00,10.00

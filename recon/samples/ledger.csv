@@ -1,0 +1,9 @@
+reference,kind,gross_minor,fee_minor,currency,occurred_at
+ch_clean_eur,CAPTURE,10000,200,EUR,2026-06-10T09:00:00Z
+ch_clean_usd,CAPTURE,25000,500,USD,2026-06-11T12:30:00Z
+rf_partial_eur,REFUND,-3000,0,EUR,2026-06-12T08:00:00Z
+cb_dispute_eur,CHARGEBACK,-10000,1500,EUR,2026-06-09T13:00:00Z
+ch_fee_leak,CAPTURE,10000,200,EUR,2026-06-13T15:00:00Z
+ch_gross_mismatch,CAPTURE,8000,160,EUR,2026-06-14T10:00:00Z
+ch_recent_pending,CAPTURE,6000,120,EUR,2026-06-23T07:00:00Z
+ch_old_missing,CAPTURE,4000,80,EUR,2026-06-01T11:00:00Z
