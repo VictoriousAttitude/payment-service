@@ -1,8 +1,8 @@
 package com.paymentservice.payment.dto
 
+import com.paymentservice.shared.Iso4217Currency
 import jakarta.validation.constraints.Min
 import jakarta.validation.constraints.NotBlank
-import jakarta.validation.constraints.Size
 import java.util.UUID
 
 data class CreatePaymentRequest(
@@ -13,7 +13,7 @@ data class CreatePaymentRequest(
     val amount: Long,
 
     @field:NotBlank(message = "Currency is required")
-    @field:Size(min = 3, max = 3, message = "Currency must be ISO 4217 (3 chars)")
+    @field:Iso4217Currency
     val currency: String,
 
     val description: String? = null,

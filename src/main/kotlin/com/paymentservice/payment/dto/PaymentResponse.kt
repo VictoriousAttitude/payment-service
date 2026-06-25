@@ -3,6 +3,7 @@ package com.paymentservice.payment.dto
 import com.paymentservice.payment.PaymentStatus
 import com.paymentservice.payment.PaymentView
 import com.paymentservice.payment.Transaction
+import com.paymentservice.shared.Money
 import java.time.Instant
 import java.util.UUID
 
@@ -10,6 +11,8 @@ data class PaymentResponse(
     val id: UUID,
     val merchantId: UUID,
     val amount: Long,
+    /** Authorized amount in the currency's major unit (1000 USD -> "10.00", 100 JPY -> "100"). */
+    val amountFormatted: String,
     val capturedAmount: Long,
     val refundedAmount: Long,
     val currency: String,
@@ -29,6 +32,7 @@ data class PaymentResponse(
             id = transaction.id,
             merchantId = transaction.merchantId,
             amount = transaction.amount,
+            amountFormatted = Money.ofMinor(transaction.amount, transaction.currency).formatMajor(),
             capturedAmount = capturedAmount,
             refundedAmount = refundedAmount,
             currency = transaction.currency,

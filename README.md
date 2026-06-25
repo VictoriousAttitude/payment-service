@@ -186,9 +186,9 @@ src/main/kotlin/com/paymentservice/
 
 ## testing
 
-21 test classes, 147 tests, all green. Integration tests run against real PostgreSQL via Testcontainers.
+22 test classes, 157 tests, all green. Integration tests run against real PostgreSQL via Testcontainers.
 
-- **unit**: state machine transitions/terminals (`PaymentStatusTest`), fee rounding direction (`LedgerFeeTest`), HMAC signing + replay window (`WebhookSignerTest`), dispute state machine (`DisputeStatusTest`), module boundaries (`ModularityTest`)
+- **unit**: state machine transitions/terminals (`PaymentStatusTest`), fee rounding direction (`LedgerFeeTest`), money model and ISO 4217 exponents (`MoneyTest`), HMAC signing + replay window (`WebhookSignerTest`), dispute state machine (`DisputeStatusTest`), module boundaries (`ModularityTest`)
 - **integration**: full lifecycle + ledger/balance math, idempotency + concurrent double-capture (409), partial and multi capture with partial refund, authorization void and expiry, disputes and chargebacks with ledger clawback, outbox concurrency (one winner via `SKIP LOCKED`) + backoff/dead-letter, signed-webhook acceptance/rejection, settlement, append-only history immutability, the deferred balance/terminal/ceiling constraint triggers, provider retry and circuit breaker, auth + ownership (401/403/404), reconciliation, prometheus counters
 - **mutation**: pitest over the money and security core (`./gradlew pitest`), and the Python recon core via `mutmut` with a zero survivor gate in CI
 

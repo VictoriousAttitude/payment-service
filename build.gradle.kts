@@ -81,6 +81,8 @@ pitest {
 			"com.paymentservice.payment.PaymentStatus*",
 			"com.paymentservice.payment.WebhookSigner*",
 			"com.paymentservice.ledger.LedgerService\$Companion",
+			"com.paymentservice.shared.Money*",
+			"com.paymentservice.shared.MonetaryCurrency",
 		)
 	)
 	targetTests.set(
@@ -88,6 +90,7 @@ pitest {
 			"com.paymentservice.payment.PaymentStatusTest",
 			"com.paymentservice.payment.WebhookSignerTest",
 			"com.paymentservice.ledger.LedgerFeeTest",
+			"com.paymentservice.shared.MoneyTest",
 		)
 	)
 	threads.set(2)

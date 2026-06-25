@@ -1,5 +1,6 @@
 package com.paymentservice.ledger
 
+import com.paymentservice.shared.Money
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
@@ -185,12 +186,21 @@ class LedgerService(
     /** Amount refunded to date, derived from the ledger (source of truth). */
     fun refundedTotal(transactionId: UUID): Long = ledgerRepository.sumRefunded(transactionId)
 
+    /**
+     * Asserts the entry set balances within a single currency. Folding with
+     * [Money] makes both invariants explicit and machine-checked: `+` rejects a
+     * cross-currency entry, so a mixed-currency set can never net to zero and
+     * pass, and the debit/credit totals must match exactly.
+     */
     private fun validateBalance(entries: List<LedgerEntry>) {
-        val totalDebits = entries.filter { it.entryType == EntryType.DEBIT }.sumOf { it.amount }
-        val totalCredits = entries.filter { it.entryType == EntryType.CREDIT }.sumOf { it.amount }
+        val zero = Money.ofMinor(0, entries.first().currency)
+        val debits = entries.filter { it.entryType == EntryType.DEBIT }
+            .fold(zero) { acc, e -> acc + Money.ofMinor(e.amount, e.currency) }
+        val credits = entries.filter { it.entryType == EntryType.CREDIT }
+            .fold(zero) { acc, e -> acc + Money.ofMinor(e.amount, e.currency) }
 
-        if (totalDebits != totalCredits) {
-            throw LedgerImbalanceException(totalDebits, totalCredits)
+        if (debits != credits) {
+            throw LedgerImbalanceException(debits.minorUnits, credits.minorUnits)
         }
     }
 }
