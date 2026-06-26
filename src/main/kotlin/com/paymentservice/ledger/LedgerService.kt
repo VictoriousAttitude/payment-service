@@ -20,6 +20,16 @@ class LedgerService(
         const val CHARGEBACK_FEE = 1_500L
         val PLATFORM_ACCOUNT_ID: UUID = UUID.fromString("00000000-0000-0000-0000-000000000001")
 
+        // Fee-leg descriptions. The platform account is credited on both a
+        // capture and a chargeback and debited on a refund, so account type
+        // alone cannot tell the three fee movements apart. The settlement
+        // extract keys on these to attribute each fee to its movement, so they
+        // are constants rather than inline literals: a silent edit here would
+        // misclassify fees in the exported clearing file.
+        const val DESC_PLATFORM_FEE = "Platform fee"
+        const val DESC_REFUND_FEE = "Refund: return platform fee"
+        const val DESC_CHARGEBACK_FEE = "Chargeback fee"
+
         /**
          * Platform fee in the minor unit, floored. Rounding is deliberate and in
          * the merchant's favor: the fractional minor unit is never charged, it
@@ -65,7 +75,7 @@ class LedgerService(
                 entryType = EntryType.CREDIT,
                 amount = fee,
                 currency = currency,
-                description = "Platform fee"
+                description = DESC_PLATFORM_FEE
             )
         )
 
@@ -95,7 +105,7 @@ class LedgerService(
                 entryType = EntryType.DEBIT,
                 amount = fee,
                 currency = currency,
-                description = "Refund: return platform fee"
+                description = DESC_REFUND_FEE
             ),
             LedgerEntry(
                 transactionId = transactionId,
@@ -151,7 +161,7 @@ class LedgerService(
                 entryType = EntryType.DEBIT,
                 amount = fee,
                 currency = currency,
-                description = "Chargeback fee"
+                description = DESC_CHARGEBACK_FEE
             ),
             LedgerEntry(
                 transactionId = transactionId,
@@ -160,7 +170,7 @@ class LedgerService(
                 entryType = EntryType.CREDIT,
                 amount = fee,
                 currency = currency,
-                description = "Chargeback fee"
+                description = DESC_CHARGEBACK_FEE
             )
         )
 
