@@ -52,6 +52,7 @@ class LedgerService(
         val entries = listOf(
             LedgerEntry(
                 transactionId = transactionId,
+                postingGroupId = transactionId,
                 accountType = AccountType.INCOMING,
                 accountId = transactionId, // incoming funds linked to this transaction
                 entryType = EntryType.DEBIT,
@@ -61,6 +62,7 @@ class LedgerService(
             ),
             LedgerEntry(
                 transactionId = transactionId,
+                postingGroupId = transactionId,
                 accountType = AccountType.MERCHANT,
                 accountId = merchantId,
                 entryType = EntryType.CREDIT,
@@ -70,6 +72,7 @@ class LedgerService(
             ),
             LedgerEntry(
                 transactionId = transactionId,
+                postingGroupId = transactionId,
                 accountType = AccountType.PLATFORM,
                 accountId = PLATFORM_ACCOUNT_ID,
                 entryType = EntryType.CREDIT,
@@ -91,6 +94,7 @@ class LedgerService(
         val entries = listOf(
             LedgerEntry(
                 transactionId = transactionId,
+                postingGroupId = transactionId,
                 accountType = AccountType.MERCHANT,
                 accountId = merchantId,
                 entryType = EntryType.DEBIT,
@@ -100,6 +104,7 @@ class LedgerService(
             ),
             LedgerEntry(
                 transactionId = transactionId,
+                postingGroupId = transactionId,
                 accountType = AccountType.PLATFORM,
                 accountId = PLATFORM_ACCOUNT_ID,
                 entryType = EntryType.DEBIT,
@@ -109,6 +114,7 @@ class LedgerService(
             ),
             LedgerEntry(
                 transactionId = transactionId,
+                postingGroupId = transactionId,
                 accountType = AccountType.OUTGOING,
                 accountId = transactionId,
                 entryType = EntryType.CREDIT,
@@ -138,6 +144,7 @@ class LedgerService(
         val entries = listOf(
             LedgerEntry(
                 transactionId = transactionId,
+                postingGroupId = transactionId,
                 accountType = AccountType.MERCHANT,
                 accountId = merchantId,
                 entryType = EntryType.DEBIT,
@@ -147,6 +154,7 @@ class LedgerService(
             ),
             LedgerEntry(
                 transactionId = transactionId,
+                postingGroupId = transactionId,
                 accountType = AccountType.CHARGEBACK,
                 accountId = transactionId,
                 entryType = EntryType.CREDIT,
@@ -156,6 +164,7 @@ class LedgerService(
             ),
             LedgerEntry(
                 transactionId = transactionId,
+                postingGroupId = transactionId,
                 accountType = AccountType.MERCHANT,
                 accountId = merchantId,
                 entryType = EntryType.DEBIT,
@@ -165,6 +174,7 @@ class LedgerService(
             ),
             LedgerEntry(
                 transactionId = transactionId,
+                postingGroupId = transactionId,
                 accountType = AccountType.PLATFORM,
                 accountId = PLATFORM_ACCOUNT_ID,
                 entryType = EntryType.CREDIT,

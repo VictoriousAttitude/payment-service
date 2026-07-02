@@ -65,7 +65,7 @@ class ReconciliationScheduler(
             "$ALERT_MARKER stuck={} missingLedgerEntries={} unbalanced={} amountMismatched={} globalBalanced={}",
             report.stuckTransactions,
             report.transactionsWithoutLedgerEntries,
-            report.unbalancedTransactions,
+            report.unbalancedPostingGroups,
             report.amountMismatchedTransactions,
             report.globalBalance.balanced
         )

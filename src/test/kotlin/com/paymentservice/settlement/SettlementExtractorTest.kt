@@ -29,6 +29,7 @@ class SettlementExtractorTest {
         createdAt: Instant = t0
     ) = LedgerEntry(
         transactionId = txnId,
+        postingGroupId = txnId,
         accountType = accountType,
         accountId = if (accountType == AccountType.MERCHANT) merchantId else txnId,
         entryType = entryType,

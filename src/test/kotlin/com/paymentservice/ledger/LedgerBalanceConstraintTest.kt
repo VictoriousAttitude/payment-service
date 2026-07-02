@@ -42,21 +42,26 @@ class LedgerBalanceConstraintTest {
         return paymentService.createPayment(request, "k-${UUID.randomUUID()}").transaction.id
     }
 
-    private fun insertEntry(transactionId: UUID, entryType: String, amount: Long) {
+    private fun insertEntry(
+        transactionId: UUID?,
+        entryType: String,
+        amount: Long,
+        postingGroupId: UUID? = transactionId
+    ) {
         jdbcTemplate.update(
             """
             INSERT INTO ledger_entries
-                (id, transaction_id, account_type, account_id, entry_type, amount, currency)
-            VALUES (?, ?, 'MERCHANT', ?, ?, ?, 'EUR')
+                (id, transaction_id, posting_group_id, account_type, account_id, entry_type, amount, currency)
+            VALUES (?, ?, ?, 'MERCHANT', ?, ?, ?, 'EUR')
             """.trimIndent(),
-            UUID.randomUUID(), transactionId, UUID.randomUUID(), entryType, amount
+            UUID.randomUUID(), transactionId, postingGroupId, UUID.randomUUID(), entryType, amount
         )
     }
 
-    private fun entryCount(transactionId: UUID): Long =
+    private fun entryCount(postingGroupId: UUID): Long =
         jdbcTemplate.queryForObject(
-            "SELECT count(*) FROM ledger_entries WHERE transaction_id = ?",
-            Long::class.java, transactionId
+            "SELECT count(*) FROM ledger_entries WHERE posting_group_id = ?",
+            Long::class.java, postingGroupId
         )!!
 
     @Test
@@ -88,5 +93,40 @@ class LedgerBalanceConstraintTest {
         }
 
         assertEquals(2L, entryCount(transactionId))
+    }
+
+    // Treasury postings (payouts, reserve releases) carry no transaction_id.
+    // The V18 posting-group rewrite exists exactly so these are still covered:
+    // grouping by transaction_id would make the check vacuous for NULL
+    // (WHERE transaction_id = NULL matches nothing).
+
+    @Test
+    fun `a balanced posting with no transaction commits`() {
+        val postingGroupId = UUID.randomUUID()
+
+        txTemplate.executeWithoutResult {
+            insertEntry(null, "DEBIT", 5_000L, postingGroupId)
+            insertEntry(null, "CREDIT", 5_000L, postingGroupId)
+        }
+
+        assertEquals(2L, entryCount(postingGroupId))
+    }
+
+    @Test
+    fun `an unbalanced posting with no transaction is rejected at commit`() {
+        val postingGroupId = UUID.randomUUID()
+
+        val error = assertFailsWith<Exception> {
+            txTemplate.executeWithoutResult {
+                insertEntry(null, "DEBIT", 5_000L, postingGroupId) // lone debit, no txn
+            }
+        }
+
+        assertTrue(
+            generateSequence(error as Throwable?) { it.cause }
+                .any { it.message?.contains("imbalance") == true },
+            "expected a ledger imbalance failure, got: $error"
+        )
+        assertEquals(0L, entryCount(postingGroupId), "the rejected insert must not persist")
     }
 }

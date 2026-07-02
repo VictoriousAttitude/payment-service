@@ -51,13 +51,18 @@ interface LedgerRepository : JpaRepository<LedgerEntry, UUID> {
     """)
     fun sumByCurrency(): List<CurrencyBalance>
 
+    /**
+     * Groups by postingGroupId, not transactionId: transactionId is nullable
+     * (treasury postings), so grouping by it would lump every payout/reserve
+     * posting into one NULL bucket and surface `null` in a List<UUID>.
+     */
     @Query("""
-        SELECT le.transactionId FROM LedgerEntry le
-        GROUP BY le.transactionId
+        SELECT le.postingGroupId FROM LedgerEntry le
+        GROUP BY le.postingGroupId
         HAVING SUM(CASE WHEN le.entryType = 'DEBIT' THEN le.amount ELSE 0 END) <>
                SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE 0 END)
     """)
-    fun findUnbalancedTransactions(): List<UUID>
+    fun findUnbalancedPostingGroups(): List<UUID>
 
     /**
      * Total captured: the INCOMING DEBIT leg is posted once per capture for the

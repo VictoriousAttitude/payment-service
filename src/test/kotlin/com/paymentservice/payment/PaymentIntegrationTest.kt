@@ -292,7 +292,7 @@ class PaymentIntegrationTest {
         injectEntriesBypassingTriggers(ledgerService.getEntriesForTransaction(txn.id))
 
         // debit==credit checks are blind: the duplicate set balances
-        assertFalse(txn.id in reconciliationService.findUnbalancedTransactions())
+        assertFalse(txn.id in reconciliationService.findUnbalancedPostingGroups())
         assertTrue(reconciliationService.verifyGlobalLedgerBalance().balanced)
 
         // amount check catches it: debits sum to 2x transaction amount
@@ -313,20 +313,23 @@ class PaymentIntegrationTest {
             conn.prepareStatement(
                 """
                 INSERT INTO ledger_entries
-                  (id, transaction_id, account_type, account_id, entry_type,
-                   amount, currency, description, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, now())
+                  (id, transaction_id, posting_group_id, account_type, account_id,
+                   entry_type, amount, currency, description, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, now())
                 """
             ).use { ps ->
                 for (e in entries) {
+                    // replica mode bypasses triggers, NOT the NOT NULL constraint:
+                    // posting_group_id must still be supplied
                     ps.setObject(1, UUID.randomUUID())
                     ps.setObject(2, e.transactionId)
-                    ps.setString(3, e.accountType.name)
-                    ps.setObject(4, e.accountId)
-                    ps.setString(5, e.entryType.name)
-                    ps.setLong(6, e.amount)
-                    ps.setString(7, e.currency)
-                    ps.setString(8, "duplicate")
+                    ps.setObject(3, e.postingGroupId)
+                    ps.setString(4, e.accountType.name)
+                    ps.setObject(5, e.accountId)
+                    ps.setString(6, e.entryType.name)
+                    ps.setLong(7, e.amount)
+                    ps.setString(8, e.currency)
+                    ps.setString(9, "duplicate")
                     ps.addBatch()
                 }
                 ps.executeBatch()
@@ -345,7 +348,7 @@ class PaymentIntegrationTest {
 
         val report = reconciliationService.runFullReconciliation()
 
-        assertTrue(report.unbalancedTransactions.isEmpty(), "no unbalanced transactions")
+        assertTrue(report.unbalancedPostingGroups.isEmpty(), "no unbalanced posting groups")
         assertTrue(report.transactionsWithoutLedgerEntries.isEmpty(), "no missing ledger entries")
         assertTrue(report.globalBalance.balanced, "global ledger balanced")
     }

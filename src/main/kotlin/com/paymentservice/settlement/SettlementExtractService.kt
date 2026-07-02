@@ -35,7 +35,12 @@ class SettlementExtractService(
         val baseByTransaction = transactionRepository.findAll()
             .associate { it.id to (it.providerReference ?: it.id.toString()) }
         return ledgerRepository.findAll()
-            .groupBy { it.transactionId }
+            // Treasury postings (payouts, reserve releases) have no transaction:
+            // they are internal money movements, not acquirer movements, so the
+            // recon oracle - which reconciles against the acquirer's clearing
+            // file - must never see them.
+            .filter { it.transactionId != null }
+            .groupBy { it.transactionId!! }
             .flatMap { (transactionId, entries) ->
                 val base = baseByTransaction[transactionId] ?: transactionId.toString()
                 SettlementExtractor.extract(base, entries)

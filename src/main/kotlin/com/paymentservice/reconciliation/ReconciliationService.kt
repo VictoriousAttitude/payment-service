@@ -52,11 +52,11 @@ class ReconciliationService(
 
     /**
      * Q3b: Is all the expected data correct?
-     * Finds transactions where ledger entries don't balance (debits != credits).
+     * Finds posting groups whose entries don't balance (debits != credits).
      * Should always return empty — any result indicates a ledger corruption.
      */
-    fun findUnbalancedTransactions(): List<UUID> {
-        return ledgerRepository.findUnbalancedTransactions()
+    fun findUnbalancedPostingGroups(): List<UUID> {
+        return ledgerRepository.findUnbalancedPostingGroups()
     }
 
     /**
@@ -89,14 +89,14 @@ class ReconciliationService(
     fun runFullReconciliation(stuckThreshold: Duration = Duration.ofMinutes(30)): ReconciliationReport {
         val stuckTransactions = findStuckTransactions(stuckThreshold)
         val missingEntries = findTransactionsWithoutLedgerEntries()
-        val unbalanced = findUnbalancedTransactions()
+        val unbalanced = findUnbalancedPostingGroups()
         val mismatchedAmounts = findTransactionsWithMismatchedAmounts()
         val globalBalance = verifyGlobalLedgerBalance()
 
         return ReconciliationReport(
             stuckTransactions = stuckTransactions.map { it.id },
             transactionsWithoutLedgerEntries = missingEntries.map { it.id },
-            unbalancedTransactions = unbalanced,
+            unbalancedPostingGroups = unbalanced,
             amountMismatchedTransactions = mismatchedAmounts,
             globalBalance = globalBalance,
             healthy = stuckTransactions.isEmpty()
@@ -117,7 +117,7 @@ data class GlobalBalanceResult(
 data class ReconciliationReport(
     val stuckTransactions: List<UUID>,
     val transactionsWithoutLedgerEntries: List<UUID>,
-    val unbalancedTransactions: List<UUID>,
+    val unbalancedPostingGroups: List<UUID>,
     val amountMismatchedTransactions: List<UUID>,
     val globalBalance: GlobalBalanceResult,
     val healthy: Boolean
