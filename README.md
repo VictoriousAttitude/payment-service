@@ -13,9 +13,9 @@ Correctness of the money is enforced at four independent layers, so a fault that
 
 ```mermaid
 flowchart TB
-    write["money movement<br/>capture, refund, chargeback"]
+    write["money movement<br/>capture, refund, chargeback,<br/>settlement split, payout"]
     app["1 application invariants<br/>validateBalance, debits equal credits<br/>state machine guards, in code ceilings"]
-    pg[("PostgreSQL<br/>2 constraint triggers at commit<br/>append only V7 V11, balance V15<br/>terminal absorbing V16, ceiling V17")]
+    pg[("PostgreSQL<br/>2 constraint triggers at commit<br/>append only V7 V11, balance V15 V18<br/>terminal absorbing V16, ceiling V17<br/>payable floor V20")]
     recon["3 scheduled reconciliation oracle<br/>per currency and global balance<br/>amount invariant sweep"]
     oracle["4 external oracle in Python<br/>ledger vs processor settlement<br/>three way reconciliation"]
 
@@ -88,6 +88,35 @@ Every money movement creates balanced entries. Debits always equal credits.
 
 **Refund** reverses with opposite entries. `LedgerService.validateBalance()` asserts `sum(debits) == sum(credits)` before persisting — if the math is wrong, the transaction rolls back.
 
+Entries are grouped by `posting_group_id`, the atomic unit the deferred balance trigger checks at commit. Payment postings use the transaction id as their group; treasury postings (payouts, reserve releases) have **no** transaction — their group is the payout or hold id.
+
+## payouts and rolling reserve
+
+Settlement is not just a status milestone: it splits the merchant's captured net across three per-merchant pots, completing the money lifecycle capture → settle → reserve → payout.
+
+| account | meaning |
+|---------|---------|
+| `MERCHANT` | pending — captured, not yet settled |
+| `MERCHANT_PAYABLE` | available — settled, disbursable |
+| `MERCHANT_RESERVE` | rolling reserve withheld against chargeback exposure |
+| `PAYOUT_CLEARING` | disbursed — in transit to the merchant's bank |
+
+**Settlement split** (at `CAPTURED → SETTLED`, atomic with the status change; default 1000 bps reserve held 90 days — industry standard is 5–10% for 90–180 days):
+| entry | account | type | amount |
+|-------|---------|------|--------|
+| 1 | MERCHANT | DEBIT | 9800 |
+| 2 | MERCHANT_RESERVE | CREDIT | 980 |
+| 3 | MERCHANT_PAYABLE | CREDIT | 8820 |
+
+A scheduled batch releases matured holds back to payable. Payouts (scheduled auto-payout above a minimum, or manual via the API) move payable into `PAYOUT_CLEARING`; a `PENDING` payout is confirmed `PAID` after T+N (no ledger movement) or `FAILED` with compensating reversal entries.
+
+Two rules make the flow honest under failure:
+
+- **a chargeback lost after settlement debits `MERCHANT_PAYABLE`, which may go negative** — the merchant owes the platform, and the reserve exists to cover exactly that hole
+- **a payout may never drive payable below zero.** The application guard serializes payouts per merchant with `SELECT ... FOR UPDATE` on the merchants row (the balance is a `SUM`, so optimistic locking has no row to version), and the V20 deferred constraint trigger re-proves the floor at commit against any writer that bypasses the service — chargeback postings are exempted by the absence of a `PAYOUT_CLEARING` leg in their posting group
+
+Known limitation, deliberate: `PARTIALLY_REFUNDED` has no `SETTLED` edge in the state machine, so "partial refund then settle" is unreachable and the split does not model it.
+
 Amounts are stored as `BIGINT` minor units (never floats). Fees are basis points (`200 bps = 2.00%`), and `platformFee()` **floors** via `Math.floorDiv` — the fractional remainder stays with the merchant so the platform never over-collects and the entry set still balances exactly. Balances are computed **per currency**; the global guard checks debits == credits within each currency, never as one cross-currency sum.
 
 ## key design decisions
@@ -122,7 +151,9 @@ One module per direct sub-package, verified acyclic at build time (`ModularityTe
 
 ```
 shared, ledger ──◄── merchant ──◄── payment ──◄── auth, config,
-                                  (outbox)         reconciliation, settlement
+                        ▲         (outbox)         reconciliation, settlement
+                        │                                        │
+                        └────────── payout ◄─────────────────────┘
 ```
 
 `shared` is the kernel (error body, the merchant-id request-attribute key, the access-denied exception). The transactional outbox lives **inside** the payment module (`payment.outbox`) because it is payment's own infrastructure.
@@ -138,7 +169,9 @@ All `/api/v1/payments/**` and `/api/v1/merchants/**` requests require an `X-Api-
 | POST | `/api/v1/payments/{id}/capture` | capture authorized payment (atomic: status + ledger) |
 | POST | `/api/v1/payments/{id}/refund` | refund captured payment (atomic: status + ledger) |
 | POST | `/api/v1/webhooks/provider-callback` | provider authorization callback (`X-Webhook-Signature` HMAC) |
-| GET | `/api/v1/merchants/{id}/balance` | per-currency merchant balance computed from the ledger |
+| GET | `/api/v1/merchants/{id}/balance` | per-currency pending / available / reserve, computed from the ledger |
+| POST | `/api/v1/merchants/{id}/payouts` | disburse the payable balance (amount optional = full available) |
+| GET | `/api/v1/merchants/{id}/payouts` | list payouts (owner only) |
 | GET | `/api/v1/reconciliation` | full reconciliation report (layer 3 guard) |
 | GET | `/actuator/health` `/actuator/prometheus` | health + metrics |
 | GET | `/api/v1/api-docs` `/swagger-ui.html` | OpenAPI 3.0 + Swagger UI |
@@ -180,16 +213,19 @@ src/main/kotlin/com/paymentservice/
 │   ├── TransactionEvent.kt       # append-only transition history
 │   ├── PaymentProviderSimulator.kt
 │   ├── WebhookController.kt / WebhookSigner.kt   # HMAC, replay window
+├── payout/           # Payout + ReserveHold entities, PayoutService (row-lock guard),
+│                     # ReserveService, @Scheduled payout/confirm/release batches
 ├── reconciliation/   # ReconciliationService + @Scheduled ReconciliationScheduler
-└── settlement/       # SettlementBatch (@Scheduled) + SettlementProcessor (CAPTURED → SETTLED)
+└── settlement/       # SettlementBatch (@Scheduled) + SettlementProcessor (CAPTURED → SETTLED
+                      # + settlement split), ledger → recon CSV extract
 ```
 
 ## testing
 
-24 test classes, 163 tests, all green. Integration tests run against real PostgreSQL via Testcontainers.
+30 test classes, 190 tests, all green. Integration tests run against real PostgreSQL via Testcontainers.
 
 - **unit**: state machine transitions/terminals (`PaymentStatusTest`), fee rounding direction (`LedgerFeeTest`), money model and ISO 4217 exponents (`MoneyTest`), settlement movement projection (`SettlementExtractorTest`), HMAC signing + replay window (`WebhookSignerTest`), dispute state machine (`DisputeStatusTest`), module boundaries (`ModularityTest`)
-- **integration**: full lifecycle + ledger/balance math, idempotency + concurrent double-capture (409), partial and multi capture with partial refund, authorization void and expiry, disputes and chargebacks with ledger clawback, outbox concurrency (one winner via `SKIP LOCKED`) + backoff/dead-letter, signed-webhook acceptance/rejection, settlement, ledger export to the recon movement CSV, append-only history immutability, the deferred balance/terminal/ceiling constraint triggers, provider retry and circuit breaker, auth + ownership (401/403/404), reconciliation, prometheus counters
+- **integration**: full lifecycle + ledger/balance math, idempotency + concurrent double-capture (409), partial and multi capture with partial refund, authorization void and expiry, disputes and chargebacks with ledger clawback (pre- and post-settlement), outbox concurrency (one winner via `SKIP LOCKED`) + backoff/dead-letter, signed-webhook acceptance/rejection, settlement split + reserve hold/release, payout lifecycle + concurrent double-payout race (row lock, one winner), ledger export to the recon movement CSV, append-only history immutability, the deferred balance/terminal/ceiling/payable-floor constraint triggers, provider retry and circuit breaker, auth + ownership (401/403/404), reconciliation, prometheus counters
 - **mutation**: pitest over the money and security core (`./gradlew pitest`), and the Python recon core via `mutmut` with a zero survivor gate in CI
 
 ```bash
@@ -240,7 +276,7 @@ The `/webhooks/provider-callback` endpoint requires a valid `X-Webhook-Signature
 
 ## database schema
 
-17 Flyway migrations (`hibernate.ddl-auto: validate`, Flyway owns the schema):
+20 Flyway migrations (`hibernate.ddl-auto: validate`, Flyway owns the schema):
 
 | migration | change |
 |-----------|--------|
@@ -261,6 +297,9 @@ The `/webhooks/provider-callback` endpoint requires a valid `X-Webhook-Signature
 | `V15` | deferred constraint trigger: per-currency ledger balance at commit |
 | `V16` | deferred constraint trigger: terminal status is absorbing |
 | `V17` | deferred constraint trigger: captured never exceeds authorized, refunded never exceeds captured |
+| `V18` | posting groups: `posting_group_id` decouples ledger entries from payment transactions; balance trigger regroups on it |
+| `V19` | `payouts` + `reserve_holds` for the settlement split and disbursement lifecycle |
+| `V20` | deferred constraint trigger: a payout never drives the payable balance negative |
 
 ## production gaps / next steps
 
@@ -268,5 +307,5 @@ This demonstrates the correctness and operability primitives. Real card processi
 
 - **real acquirer/network integration**: the provider is a simulator. Settlement is a state milestone only, with no clearing entries and no acquirer settlement-file ingestion
 - **PCI scope**: card tokenization/vaulting and **SCA/3DS** (PSD2) are absent
-- **payouts/disbursement, reserves/holds**: merchant funding flows are not modelled
+- **payout rails**: disbursement stops at `PAYOUT_CLEARING` — no bank file/SEPA integration, payout confirmation is a T+N milestone rather than a bank acknowledgment
 - **scale/ops**: time-partitioning and archival for the append-only tables, distributed tracing, leader election for scheduled jobs, rate limiting, API-key rotation/scopes

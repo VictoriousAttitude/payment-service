@@ -2,6 +2,7 @@ package com.paymentservice.dispute
 
 import com.paymentservice.ledger.LedgerService
 import com.paymentservice.payment.PaymentService
+import com.paymentservice.payment.PaymentStatus
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
@@ -88,11 +89,14 @@ class DisputeService(
 
             if (!won) {
                 val transaction = paymentService.getPayment(dispute.transactionId)
+                // Post-settlement the funds live in MERCHANT_PAYABLE; the
+                // clawback must hit the pot that actually holds them.
                 ledgerService.createChargebackEntries(
                     transactionId = dispute.transactionId,
                     merchantId = transaction.merchantId,
                     amount = dispute.amount,
-                    currency = dispute.currency
+                    currency = dispute.currency,
+                    settled = transaction.status == PaymentStatus.SETTLED
                 )
             }
 

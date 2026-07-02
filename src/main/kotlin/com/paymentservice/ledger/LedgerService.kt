@@ -143,16 +143,31 @@ class LedgerService(
      * On top, a flat dispute fee is charged: debit merchant, credit platform.
      * The set balances (debits = amount + fee = credits) and posts nothing that
      * sumRefunded/sumCaptured would miscount.
+     *
+     * [settled] selects which merchant pot pays: before settlement the funds
+     * still sit in the pending MERCHANT account; after the settlement split
+     * they have moved to MERCHANT_PAYABLE, so a settled chargeback debits
+     * PAYABLE instead - which MAY go negative (the merchant owes the platform;
+     * the payable floor trigger exempts groups without a PAYOUT_CLEARING leg).
+     * The CHARGEBACK/PLATFORM credit legs are identical in both cases, so the
+     * settlement extract keeps matching them.
      */
     @Transactional(propagation = Propagation.MANDATORY)
-    fun createChargebackEntries(transactionId: UUID, merchantId: UUID, amount: Long, currency: String) {
+    fun createChargebackEntries(
+        transactionId: UUID,
+        merchantId: UUID,
+        amount: Long,
+        currency: String,
+        settled: Boolean
+    ) {
         val fee = CHARGEBACK_FEE
+        val merchantSide = if (settled) AccountType.MERCHANT_PAYABLE else AccountType.MERCHANT
 
         val entries = listOf(
             LedgerEntry(
                 transactionId = transactionId,
                 postingGroupId = transactionId,
-                accountType = AccountType.MERCHANT,
+                accountType = merchantSide,
                 accountId = merchantId,
                 entryType = EntryType.DEBIT,
                 amount = amount,
@@ -172,7 +187,7 @@ class LedgerService(
             LedgerEntry(
                 transactionId = transactionId,
                 postingGroupId = transactionId,
-                accountType = AccountType.MERCHANT,
+                accountType = merchantSide,
                 accountId = merchantId,
                 entryType = EntryType.DEBIT,
                 amount = fee,
