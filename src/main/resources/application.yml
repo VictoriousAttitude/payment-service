@@ -66,6 +66,16 @@ payment:
     interval-ms: ${SETTLEMENT_INTERVAL_MS:300000}
     initial-delay-ms: ${SETTLEMENT_INITIAL_DELAY_MS:30000}
     delay-minutes: ${SETTLEMENT_DELAY_MINUTES:1440}
+  reserve:
+    # Rolling reserve withheld at settlement against chargeback exposure:
+    # rate in basis points of the settled net (floored, remainder to the
+    # merchant) held for hold-days before release to the payable balance.
+    # Industry standard is 5-10% for 90-180 days.
+    rate-bps: ${RESERVE_RATE_BPS:1000}
+    hold-days: ${RESERVE_HOLD_DAYS:90}
+    # How often the release batch sweeps matured holds, and its startup delay.
+    release-interval-ms: ${RESERVE_RELEASE_INTERVAL_MS:300000}
+    release-initial-delay-ms: ${RESERVE_RELEASE_INITIAL_DELAY_MS:30000}
   authorization:
     # Scheduled sweep that expires authorizations not captured within the
     # validity window. Card auth holds are time-bounded; 7 days (10080m) default.

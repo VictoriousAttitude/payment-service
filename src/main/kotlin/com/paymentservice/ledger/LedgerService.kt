@@ -30,6 +30,11 @@ class LedgerService(
         const val DESC_REFUND_FEE = "Refund: return platform fee"
         const val DESC_CHARGEBACK_FEE = "Chargeback fee"
 
+        // Treasury-posting descriptions (settlement split, reserve lifecycle).
+        const val DESC_SETTLEMENT_CLEARED = "Settlement: funds cleared"
+        const val DESC_RESERVE_HELD = "Reserve: withheld at settlement"
+        const val DESC_RESERVE_RELEASED = "Reserve: released to payable"
+
         /**
          * Platform fee in the minor unit, floored. Rounding is deliberate and in
          * the merchant's favor: the fractional minor unit is never charged, it
@@ -187,6 +192,108 @@ class LedgerService(
         validateBalance(entries)
         ledgerRepository.saveAll(entries)
     }
+
+    /**
+     * Posts the settlement split: the merchant's captured net moves out of the
+     * pending MERCHANT account into MERCHANT_PAYABLE (available for payout),
+     * less the rolling reserve slice withheld in MERCHANT_RESERVE. Runs inside
+     * the settle() transaction (MANDATORY), atomic with CAPTURED -> SETTLED.
+     * The reserve leg is skipped when the floor rounds it to zero - a
+     * zero-amount entry would violate CHECK (amount > 0).
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun createSettlementSplitEntries(
+        transactionId: UUID,
+        merchantId: UUID,
+        net: Long,
+        reserve: Long,
+        currency: String
+    ) {
+        val entries = buildList {
+            add(
+                LedgerEntry(
+                    transactionId = transactionId,
+                    postingGroupId = transactionId,
+                    accountType = AccountType.MERCHANT,
+                    accountId = merchantId,
+                    entryType = EntryType.DEBIT,
+                    amount = net,
+                    currency = currency,
+                    description = DESC_SETTLEMENT_CLEARED
+                )
+            )
+            if (reserve > 0) {
+                add(
+                    LedgerEntry(
+                        transactionId = transactionId,
+                        postingGroupId = transactionId,
+                        accountType = AccountType.MERCHANT_RESERVE,
+                        accountId = merchantId,
+                        entryType = EntryType.CREDIT,
+                        amount = reserve,
+                        currency = currency,
+                        description = DESC_RESERVE_HELD
+                    )
+                )
+            }
+            add(
+                LedgerEntry(
+                    transactionId = transactionId,
+                    postingGroupId = transactionId,
+                    accountType = AccountType.MERCHANT_PAYABLE,
+                    accountId = merchantId,
+                    entryType = EntryType.CREDIT,
+                    amount = net - reserve,
+                    currency = currency,
+                    description = DESC_SETTLEMENT_CLEARED
+                )
+            )
+        }
+
+        validateBalance(entries)
+        ledgerRepository.saveAll(entries)
+    }
+
+    /**
+     * Moves a matured reserve hold back into the payable balance. A treasury
+     * posting: no payment transaction, the posting group is the hold id.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun createReserveReleaseEntries(holdId: UUID, merchantId: UUID, amount: Long, currency: String) {
+        val entries = listOf(
+            LedgerEntry(
+                transactionId = null,
+                postingGroupId = holdId,
+                accountType = AccountType.MERCHANT_RESERVE,
+                accountId = merchantId,
+                entryType = EntryType.DEBIT,
+                amount = amount,
+                currency = currency,
+                description = DESC_RESERVE_RELEASED
+            ),
+            LedgerEntry(
+                transactionId = null,
+                postingGroupId = holdId,
+                accountType = AccountType.MERCHANT_PAYABLE,
+                accountId = merchantId,
+                entryType = EntryType.CREDIT,
+                amount = amount,
+                currency = currency,
+                description = DESC_RESERVE_RELEASED
+            )
+        )
+
+        validateBalance(entries)
+        ledgerRepository.saveAll(entries)
+    }
+
+    /**
+     * The merchant's net position from one transaction (credits - debits on the
+     * MERCHANT account): captures minus refunds minus pre-settlement
+     * chargebacks. This is exactly what the settlement split moves.
+     */
+    fun merchantNetForTransaction(transactionId: UUID): Long =
+        ledgerRepository.merchantNetForTransaction(transactionId)
 
     fun getMerchantBalance(merchantId: UUID, currency: String): Long {
         return ledgerRepository.computeBalance(AccountType.MERCHANT, merchantId, currency.uppercase())

@@ -16,6 +16,12 @@ payment:
     interval-ms: 3600000
     initial-delay-ms: 3600000
     delay-minutes: 0
+  reserve:
+    # Park the release batch; tests drive releaseMatured() directly. hold-days 0
+    # makes a fresh hold immediately releasable when the test runs the sweep.
+    release-interval-ms: 3600000
+    release-initial-delay-ms: 3600000
+    hold-days: 0
   authorization:
     # Park the scheduled sweep; the test drives expireStaleAuthorizations()
     # directly. validity-minutes 0 makes a fresh authorization immediately

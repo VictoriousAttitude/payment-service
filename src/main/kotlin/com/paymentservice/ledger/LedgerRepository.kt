@@ -8,6 +8,8 @@ interface LedgerRepository : JpaRepository<LedgerEntry, UUID> {
 
     fun findByTransactionId(transactionId: UUID): List<LedgerEntry>
 
+    fun findByPostingGroupId(postingGroupId: UUID): List<LedgerEntry>
+
     /**
      * Net balance (credits - debits) for an account in a single currency.
      * Currency is part of the key: summing across currencies would add cents of
@@ -77,6 +79,19 @@ interface LedgerRepository : JpaRepository<LedgerEntry, UUID> {
         AND le.entryType = com.paymentservice.ledger.EntryType.DEBIT
     """)
     fun sumCaptured(transactionId: UUID): Long
+
+    /**
+     * The merchant's net position on the MERCHANT (pending) account for one
+     * transaction: capture credits minus refund/chargeback debits. What the
+     * settlement split moves out of pending.
+     */
+    @Query("""
+        SELECT COALESCE(SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE -le.amount END), 0)
+        FROM LedgerEntry le
+        WHERE le.transactionId = :transactionId
+        AND le.accountType = com.paymentservice.ledger.AccountType.MERCHANT
+    """)
+    fun merchantNetForTransaction(transactionId: UUID): Long
 
     /**
      * Total refunded: the OUTGOING CREDIT leg is posted once per refund for the
