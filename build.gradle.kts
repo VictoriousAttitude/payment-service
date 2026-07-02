@@ -84,6 +84,8 @@ pitest {
 			"com.paymentservice.shared.Money*",
 			"com.paymentservice.shared.MonetaryCurrency",
 			"com.paymentservice.settlement.SettlementExtractor",
+			"com.paymentservice.settlement.AcquirerCsvParser",
+			"com.paymentservice.settlement.SettlementFileReconciler",
 		)
 	)
 	targetTests.set(
@@ -93,6 +95,8 @@ pitest {
 			"com.paymentservice.ledger.LedgerFeeTest",
 			"com.paymentservice.shared.MoneyTest",
 			"com.paymentservice.settlement.SettlementExtractorTest",
+			"com.paymentservice.settlement.AcquirerCsvParserTest",
+			"com.paymentservice.settlement.SettlementFileReconcilerTest",
 		)
 	)
 	threads.set(2)
