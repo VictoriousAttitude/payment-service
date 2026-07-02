@@ -22,6 +22,16 @@ payment:
     release-interval-ms: 3600000
     release-initial-delay-ms: 3600000
     hold-days: 0
+  payout:
+    # Park BOTH payout schedulers: a background auto-payout draining the shared
+    # accumulated test DB would break other tests' balance-delta assertions.
+    # Tests drive payoutEligible()/confirmSettled() directly.
+    interval-ms: 3600000
+    initial-delay-ms: 3600000
+    confirm-interval-ms: 3600000
+    confirm-initial-delay-ms: 3600000
+    confirm-delay-minutes: 0
+    minimum-amount: 100
   authorization:
     # Park the scheduled sweep; the test drives expireStaleAuthorizations()
     # directly. validity-minutes 0 makes a fresh authorization immediately

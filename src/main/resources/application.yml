@@ -76,6 +76,18 @@ payment:
     # How often the release batch sweeps matured holds, and its startup delay.
     release-interval-ms: ${RESERVE_RELEASE_INTERVAL_MS:300000}
     release-initial-delay-ms: ${RESERVE_RELEASE_INITIAL_DELAY_MS:30000}
+  payout:
+    # Auto-payout sweep: disburses every merchant whose payable balance reaches
+    # minimum-amount (minor units). Manual payouts via the API share the same
+    # guarded path.
+    interval-ms: ${PAYOUT_INTERVAL_MS:300000}
+    initial-delay-ms: ${PAYOUT_INITIAL_DELAY_MS:60000}
+    minimum-amount: ${PAYOUT_MINIMUM_AMOUNT:1000}
+    # Confirm sweep: a PENDING payout older than confirm-delay-minutes is
+    # marked PAID (T+N milestone; failures arrive via the bank channel).
+    confirm-interval-ms: ${PAYOUT_CONFIRM_INTERVAL_MS:300000}
+    confirm-initial-delay-ms: ${PAYOUT_CONFIRM_INITIAL_DELAY_MS:60000}
+    confirm-delay-minutes: ${PAYOUT_CONFIRM_DELAY_MINUTES:60}
   authorization:
     # Scheduled sweep that expires authorizations not captured within the
     # validity window. Card auth holds are time-bounded; 7 days (10080m) default.

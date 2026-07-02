@@ -11,6 +11,9 @@ import com.paymentservice.payment.IdempotencyKeyReuseException
 import com.paymentservice.payment.InvalidPaymentAmountException
 import com.paymentservice.payment.InvalidStateTransitionException
 import com.paymentservice.payment.TransactionNotFoundException
+import com.paymentservice.payout.InvalidPayoutAmountException
+import com.paymentservice.payout.InvalidPayoutTransitionException
+import com.paymentservice.payout.PayoutNotFoundException
 import com.paymentservice.shared.ErrorResponse
 import com.paymentservice.shared.PaymentAccessDeniedException
 import org.springframework.dao.OptimisticLockingFailureException
@@ -114,6 +117,33 @@ class GlobalExceptionHandler {
     fun handleDisputeNotAllowed(e: DisputeNotAllowedException): ResponseEntity<ErrorResponse> {
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(
             ErrorResponse("DISPUTE_NOT_ALLOWED", e.message ?: "Dispute not allowed")
+        )
+    }
+
+    @ExceptionHandler(PayoutNotFoundException::class)
+    fun handlePayoutNotFound(e: PayoutNotFoundException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+            ErrorResponse("PAYOUT_NOT_FOUND", e.message ?: "Payout not found")
+        )
+    }
+
+    // 422: well-formed request, but the payable balance cannot fund it
+    // (nothing available, over-request, or a chargeback pushed it negative).
+    @ExceptionHandler(InvalidPayoutAmountException::class)
+    fun handleInvalidPayoutAmount(e: InvalidPayoutAmountException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(
+            ErrorResponse("INVALID_PAYOUT_AMOUNT", e.message ?: "Invalid payout amount")
+        )
+    }
+
+    @ExceptionHandler(InvalidPayoutTransitionException::class)
+    fun handleInvalidPayoutTransition(e: InvalidPayoutTransitionException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(
+            ErrorResponse(
+                error = "INVALID_PAYOUT_TRANSITION",
+                message = e.message ?: "Invalid payout transition",
+                details = mapOf("from" to e.from.name, "to" to e.to.name)
+            )
         )
     }
 

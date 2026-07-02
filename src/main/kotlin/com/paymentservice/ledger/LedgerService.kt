@@ -34,6 +34,8 @@ class LedgerService(
         const val DESC_SETTLEMENT_CLEARED = "Settlement: funds cleared"
         const val DESC_RESERVE_HELD = "Reserve: withheld at settlement"
         const val DESC_RESERVE_RELEASED = "Reserve: released to payable"
+        const val DESC_PAYOUT = "Payout: disbursed to merchant"
+        const val DESC_PAYOUT_REVERSAL = "Payout failed: funds returned to payable"
 
         /**
          * Platform fee in the minor unit, floored. Rounding is deliberate and in
@@ -294,6 +296,88 @@ class LedgerService(
      */
     fun merchantNetForTransaction(transactionId: UUID): Long =
         ledgerRepository.merchantNetForTransaction(transactionId)
+
+    /**
+     * Moves a payout out of the payable balance into the clearing account
+     * (funds in transit to the merchant's bank). Treasury posting: no payment
+     * transaction, the posting group is the payout id. The clearing account is
+     * keyed by merchant so in-transit funds stay attributable per merchant.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun createPayoutEntries(payoutId: UUID, merchantId: UUID, amount: Long, currency: String) {
+        val entries = listOf(
+            LedgerEntry(
+                transactionId = null,
+                postingGroupId = payoutId,
+                accountType = AccountType.MERCHANT_PAYABLE,
+                accountId = merchantId,
+                entryType = EntryType.DEBIT,
+                amount = amount,
+                currency = currency,
+                description = DESC_PAYOUT
+            ),
+            LedgerEntry(
+                transactionId = null,
+                postingGroupId = payoutId,
+                accountType = AccountType.PAYOUT_CLEARING,
+                accountId = merchantId,
+                entryType = EntryType.CREDIT,
+                amount = amount,
+                currency = currency,
+                description = DESC_PAYOUT
+            )
+        )
+
+        validateBalance(entries)
+        ledgerRepository.saveAll(entries)
+    }
+
+    /**
+     * Compensates a failed payout: the in-transit funds return from clearing to
+     * the payable balance. Posted into the SAME posting group as the original
+     * payout, so the group stays balanced and the payout's full money history
+     * reads under one key.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun createPayoutReversalEntries(payoutId: UUID, merchantId: UUID, amount: Long, currency: String) {
+        val entries = listOf(
+            LedgerEntry(
+                transactionId = null,
+                postingGroupId = payoutId,
+                accountType = AccountType.PAYOUT_CLEARING,
+                accountId = merchantId,
+                entryType = EntryType.DEBIT,
+                amount = amount,
+                currency = currency,
+                description = DESC_PAYOUT_REVERSAL
+            ),
+            LedgerEntry(
+                transactionId = null,
+                postingGroupId = payoutId,
+                accountType = AccountType.MERCHANT_PAYABLE,
+                accountId = merchantId,
+                entryType = EntryType.CREDIT,
+                amount = amount,
+                currency = currency,
+                description = DESC_PAYOUT_REVERSAL
+            )
+        )
+
+        validateBalance(entries)
+        ledgerRepository.saveAll(entries)
+    }
+
+    /** Net payable (available-for-payout) balance for a merchant in one currency. */
+    fun getPayableBalance(merchantId: UUID, currency: String): Long =
+        ledgerRepository.computeBalance(AccountType.MERCHANT_PAYABLE, merchantId, currency.uppercase())
+
+    /** Per-currency balances of any account - pending, payable, reserve, clearing. */
+    fun getBalancesByCurrency(accountType: AccountType, accountId: UUID): List<CurrencyBalance> =
+        ledgerRepository.computeBalancesByCurrency(accountType, accountId)
+
+    /** Merchants whose payable balance can fund at least [minimum], per currency. */
+    fun payableBalancesAtLeast(minimum: Long): List<AccountCurrencyBalance> =
+        ledgerRepository.payableBalancesAtLeast(minimum)
 
     fun getMerchantBalance(merchantId: UUID, currency: String): Long {
         return ledgerRepository.computeBalance(AccountType.MERCHANT, merchantId, currency.uppercase())

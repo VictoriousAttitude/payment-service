@@ -67,6 +67,24 @@ interface LedgerRepository : JpaRepository<LedgerEntry, UUID> {
     fun findUnbalancedPostingGroups(): List<UUID>
 
     /**
+     * Merchants whose net payable balance reaches [minimum], one row per
+     * (merchant, currency): the auto-payout batch's work queue.
+     */
+    @Query("""
+        SELECT new com.paymentservice.ledger.AccountCurrencyBalance(
+            le.accountId,
+            le.currency,
+            SUM(CASE WHEN le.entryType = 'DEBIT' THEN le.amount ELSE 0 END),
+            SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE 0 END))
+        FROM LedgerEntry le
+        WHERE le.accountType = com.paymentservice.ledger.AccountType.MERCHANT_PAYABLE
+        GROUP BY le.accountId, le.currency
+        HAVING SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE 0 END) -
+               SUM(CASE WHEN le.entryType = 'DEBIT' THEN le.amount ELSE 0 END) >= :minimum
+    """)
+    fun payableBalancesAtLeast(minimum: Long): List<AccountCurrencyBalance>
+
+    /**
      * Total captured: the INCOMING DEBIT leg is posted once per capture for the
      * captured amount, so its running sum is the amount captured to date. This
      * derives the remaining-capturable headroom for partial/multi-capture.
@@ -118,4 +136,14 @@ data class CurrencyBalance(
 ) {
     val net: Long get() = totalCredits - totalDebits
     val balanced: Boolean get() = totalDebits == totalCredits
+}
+
+/** [CurrencyBalance] keyed by the owning account: one (account, currency) row. */
+data class AccountCurrencyBalance(
+    val accountId: UUID,
+    val currency: String,
+    val totalDebits: Long,
+    val totalCredits: Long
+) {
+    val net: Long get() = totalCredits - totalDebits
 }
