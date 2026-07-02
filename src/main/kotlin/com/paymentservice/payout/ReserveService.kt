@@ -32,7 +32,7 @@ class ReserveService(
      * platformFee: the fractional minor unit stays with the merchant (lands in
      * payable via net - reserve), so the split always balances exactly.
      */
-    fun reserveAmount(net: Long): Long = Math.floorDiv(net * rateBps, 10_000)
+    fun reserveAmount(net: Long): Long = Math.floorDiv(net * rateBps, BPS_DENOMINATOR)
 
     /**
      * Records the hold row for a reserve slice already posted by the settlement
@@ -76,5 +76,10 @@ class ReserveService(
         log.info("Reserve released hold={} merchant={} amount={}", hold.id, hold.merchantId, hold.amount)
         meterRegistry.counter("reserve.released", "currency", hold.currency).increment()
         return hold.currency
+    }
+
+    companion object {
+        /** Basis points denominator: 10_000 bps = 100%. */
+        private const val BPS_DENOMINATOR = 10_000L
     }
 }
