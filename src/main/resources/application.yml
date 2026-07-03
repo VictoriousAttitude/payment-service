@@ -66,6 +66,14 @@ payment:
     interval-ms: ${SETTLEMENT_INTERVAL_MS:300000}
     initial-delay-ms: ${SETTLEMENT_INITIAL_DELAY_MS:30000}
     delay-minutes: ${SETTLEMENT_DELAY_MINUTES:1440}
+  settlement-file:
+    # Reconciliation window for uploaded acquirer settlement files: ledger
+    # movements newer than this are pending (not yet expected in a file),
+    # older ones absent from the file are MISSING_IN_SETTLEMENT. T+2 default,
+    # matching the recon CLI.
+    window-days: ${SETTLEMENT_FILE_WINDOW_DAYS:2}
+    # Upload size cap; uploads over this are rejected with 413 before parsing.
+    max-bytes: ${SETTLEMENT_FILE_MAX_BYTES:1048576}
   reserve:
     # Rolling reserve withheld at settlement against chargeback exposure:
     # rate in basis points of the settled net (floored, remainder to the
