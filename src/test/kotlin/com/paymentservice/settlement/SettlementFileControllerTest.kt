@@ -110,6 +110,16 @@ class SettlementFileControllerTest {
     }
 
     @Test
+    fun `settlement extract endpoint serves the recon movement csv`() {
+        val response = restTemplate.getForEntity("/api/v1/settlement-extract", String::class.java)
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+        assertTrue(
+            response.body!!.startsWith("reference,kind,gross_minor,fee_minor,currency,occurred_at\n")
+        )
+    }
+
+    @Test
     fun `unknown file id is a 404`() {
         val response = restTemplate.getForEntity(
             "/api/v1/settlement-files/${UUID.randomUUID()}",
