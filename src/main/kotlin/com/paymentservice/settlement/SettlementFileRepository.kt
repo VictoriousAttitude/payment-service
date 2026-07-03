@@ -6,4 +6,6 @@ import java.util.UUID
 interface SettlementFileRepository : JpaRepository<SettlementFile, UUID> {
 
     fun findByContentSha256(contentSha256: String): SettlementFile?
+
+    fun findAllByOrderByCreatedAtDesc(): List<SettlementFile>
 }

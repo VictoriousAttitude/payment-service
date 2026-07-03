@@ -14,6 +14,8 @@ import com.paymentservice.payment.TransactionNotFoundException
 import com.paymentservice.payout.InvalidPayoutAmountException
 import com.paymentservice.payout.InvalidPayoutTransitionException
 import com.paymentservice.payout.PayoutNotFoundException
+import com.paymentservice.settlement.SettlementFileNotFoundException
+import com.paymentservice.settlement.SettlementFileTooLargeException
 import com.paymentservice.shared.ErrorResponse
 import com.paymentservice.shared.PaymentAccessDeniedException
 import org.springframework.dao.OptimisticLockingFailureException
@@ -144,6 +146,21 @@ class GlobalExceptionHandler {
                 message = e.message ?: "Invalid payout transition",
                 details = mapOf("from" to e.from.name, "to" to e.to.name)
             )
+        )
+    }
+
+    @ExceptionHandler(SettlementFileNotFoundException::class)
+    fun handleSettlementFileNotFound(e: SettlementFileNotFoundException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+            ErrorResponse("SETTLEMENT_FILE_NOT_FOUND", e.message ?: "Settlement file not found")
+        )
+    }
+
+    // 413 before any parsing: the size cap guards memory, not format.
+    @ExceptionHandler(SettlementFileTooLargeException::class)
+    fun handleSettlementFileTooLarge(e: SettlementFileTooLargeException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(
+            ErrorResponse("SETTLEMENT_FILE_TOO_LARGE", e.message ?: "Settlement file too large")
         )
     }
 
