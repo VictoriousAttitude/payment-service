@@ -173,6 +173,9 @@ All `/api/v1/payments/**` and `/api/v1/merchants/**` requests require an `X-Api-
 | POST | `/api/v1/merchants/{id}/payouts` | disburse the payable balance (amount optional = full available) |
 | GET | `/api/v1/merchants/{id}/payouts` | list payouts (owner only) |
 | GET | `/api/v1/reconciliation` | full reconciliation report (layer 3 guard) |
+| POST | `/api/v1/settlement-files?filename=...` | ingest an acquirer settlement file (raw `text/csv` body); idempotent by content sha-256: 201 fresh verdict, 200 replayed verdict, 413 over the size cap |
+| GET | `/api/v1/settlement-files` and `/{id}` | ingestion verdicts; detail includes the persisted discrepancies |
+| GET | `/api/v1/settlement-extract` | ledger movement CSV for the offline recon oracle |
 | GET | `/actuator/health` `/actuator/prometheus` | health + metrics |
 | GET | `/api/v1/api-docs` `/swagger-ui.html` | OpenAPI 3.0 + Swagger UI |
 
@@ -181,6 +184,7 @@ All `/api/v1/payments/**` and `/api/v1/merchants/**` requests require an `X-Api-
 - micrometer + `/actuator/prometheus`; domain counters `payments.captured`/`refunded`/`settled{currency}`, `payments.callbacks{outcome}`, `reconciliation.healthy` gauge + `anomalies` counter
 - MDC correlation: a request-id filter sets/echoes `X-Request-Id`; capture/refund/callback bind `txnId` — log pattern surfaces both
 - reconciliation runs on a schedule and emits a single `RECONCILIATION_ALERT` error line per anomaly category — a zero-infra alerting seam
+- settlement-file ingestion mirrors the same seam: `settlement.file.healthy` gauge, `settlement.files.ingested{result}` and per-type `settlement.file.discrepancies{type}` counters, one `SETTLEMENT_FILE_ALERT` error line per bad file
 
 ## tech stack
 
@@ -217,15 +221,16 @@ src/main/kotlin/com/paymentservice/
 │                     # ReserveService, @Scheduled payout/confirm/release batches
 ├── reconciliation/   # ReconciliationService + @Scheduled ReconciliationScheduler
 └── settlement/       # SettlementBatch (@Scheduled) + SettlementProcessor (CAPTURED → SETTLED
-                      # + settlement split), ledger → recon CSV extract
+                      # + settlement split), ledger → recon CSV extract, acquirer settlement-file
+                      # ingestion (strict CSV parser, pure reconciler, sha-256 dedup, verdicts)
 ```
 
 ## testing
 
-30 test classes, 190 tests, all green. Integration tests run against real PostgreSQL via Testcontainers.
+35 test classes, 232 tests, all green. Integration tests run against real PostgreSQL via Testcontainers.
 
-- **unit**: state machine transitions/terminals (`PaymentStatusTest`), fee rounding direction (`LedgerFeeTest`), money model and ISO 4217 exponents (`MoneyTest`), settlement movement projection (`SettlementExtractorTest`), HMAC signing + replay window (`WebhookSignerTest`), dispute state machine (`DisputeStatusTest`), module boundaries (`ModularityTest`)
-- **integration**: full lifecycle + ledger/balance math, idempotency + concurrent double-capture (409), partial and multi capture with partial refund, authorization void and expiry, disputes and chargebacks with ledger clawback (pre- and post-settlement), outbox concurrency (one winner via `SKIP LOCKED`) + backoff/dead-letter, signed-webhook acceptance/rejection, settlement split + reserve hold/release, payout lifecycle + concurrent double-payout race (row lock, one winner), ledger export to the recon movement CSV, append-only history immutability, the deferred balance/terminal/ceiling/payable-floor constraint triggers, provider retry and circuit breaker, auth + ownership (401/403/404), reconciliation, prometheus counters
+- **unit**: state machine transitions/terminals (`PaymentStatusTest`), fee rounding direction (`LedgerFeeTest`), money model and ISO 4217 exponents (`MoneyTest`), settlement movement projection (`SettlementExtractorTest`), acquirer CSV strict parsing (`AcquirerCsvParserTest`), pure file reconciliation semantics incl. window boundary and currency short-circuit (`SettlementFileReconcilerTest`), HMAC signing + replay window (`WebhookSignerTest`), dispute state machine (`DisputeStatusTest`), module boundaries (`ModularityTest`)
+- **integration**: full lifecycle + ledger/balance math, idempotency + concurrent double-capture (409), partial and multi capture with partial refund, authorization void and expiry, disputes and chargebacks with ledger clawback (pre- and post-settlement), outbox concurrency (one winner via `SKIP LOCKED`) + backoff/dead-letter, signed-webhook acceptance/rejection, settlement split + reserve hold/release, payout lifecycle + concurrent double-payout race (row lock, one winner), ledger export to the recon movement CSV, settlement-file ingestion (sha dedup, persisted verdicts, upload/inspection endpoints) + a fault matrix proving every discrepancy class is classified against the live ledger, append-only history immutability, the deferred balance/terminal/ceiling/payable-floor constraint triggers, provider retry and circuit breaker, auth + ownership (401/403/404), reconciliation, prometheus counters
 - **mutation**: pitest over the money and security core (`./gradlew pitest`), and the Python recon core via `mutmut` with a zero survivor gate in CI
 
 ```bash
@@ -274,9 +279,37 @@ curl -s http://localhost:8080/actuator/prometheus | grep payments_
 
 The `/webhooks/provider-callback` endpoint requires a valid `X-Webhook-Signature` (HMAC over the raw body within a tolerance window), so it is normally driven by the provider simulator rather than called by hand.
 
+## three-way reconciliation
+
+The acquirer settlement file is reconciled twice, by two implementations that share nothing but the wire contract, and the verdicts must agree:
+
+- **leg A, online control (JVM)**: `POST /api/v1/settlement-files` matches the uploaded file against the live ledger and persists the verdict with its discrepancies. Reconcile-and-alert only: it never mutates payment state, and the timer-driven settlement batch keeps owning `CAPTURED → SETTLED`
+- **leg B, offline oracle (Python)**: the zero-dependency `recon` engine (see `recon/`) matches the exported ledger CSV against the same file, independently by design (Knight-Leveson)
+- **leg C, adversary (Python)**: `procsim` simulates the acquirer, generating the settlement file from the ledger extract and injecting seeded faults that map 1:1 to the discrepancy taxonomy, so both implementations are proven to catch every class (drop, phantom, duplicate, wrong kind/currency/gross/fee)
+
+Runbook, with the app running and at least one captured payment:
+
+```bash
+# 1. export the ledger movement extract
+curl -s http://localhost:8080/api/v1/settlement-extract -o extract.csv
+
+# 2. leg C: simulate the acquirer with a seeded fee fault (recon/ venv, see recon/README)
+procsim --ledger extract.csv --out settlement.csv --fault wrong_fee --seed 42 --manifest manifest.json
+
+# 3. leg B: the Python oracle flags the FEE_MISMATCH and exits 1
+recon --ledger extract.csv --settlement settlement.csv; echo "exit: $?"
+
+# 4. leg A: the JVM verdict for the same bytes must agree
+curl -s -X POST --data-binary @settlement.csv -H 'Content-Type: text/csv' \
+  'http://localhost:8080/api/v1/settlement-files?filename=settlement.csv' | jq .
+curl -s http://localhost:8080/api/v1/settlement-files/<ID> | jq '.discrepancies'
+```
+
+Matching joins on the extract's reference grain, per (transaction, kind) with `:refund`/`:chargeback` suffixes, not ARN-level: two transactions sharing a provider reference correctly surface as a ledger-side `DUPLICATE_REFERENCE`. Ledger movements newer than the T+2 window that are absent from the file are pending, not discrepancies. A re-upload of identical bytes returns the persisted verdict (idempotent by content sha-256).
+
 ## database schema
 
-20 Flyway migrations (`hibernate.ddl-auto: validate`, Flyway owns the schema):
+21 Flyway migrations (`hibernate.ddl-auto: validate`, Flyway owns the schema):
 
 | migration | change |
 |-----------|--------|
@@ -300,12 +333,13 @@ The `/webhooks/provider-callback` endpoint requires a valid `X-Webhook-Signature
 | `V18` | posting groups: `posting_group_id` decouples ledger entries from payment transactions; balance trigger regroups on it |
 | `V19` | `payouts` + `reserve_holds` for the settlement split and disbursement lifecycle |
 | `V20` | deferred constraint trigger: a payout never drives the payable balance negative |
+| `V21` | `settlement_files` (unique content sha) + `settlement_file_discrepancies` for ingestion verdicts |
 
 ## production gaps / next steps
 
 This demonstrates the correctness and operability primitives. Real card processing at a PSP would additionally require:
 
-- **real acquirer/network integration**: the provider is a simulator. Settlement is a state milestone only, with no clearing entries and no acquirer settlement-file ingestion
+- **real acquirer/network integration**: the provider is a simulator. Settlement-file ingestion accepts a simplified Stripe-style CSV over REST rather than SFTP/AS2 delivery, matches on provider reference rather than ARN (and without quoting or free-text fields a real acquirer format needs), reconciles against a full-ledger extract per file rather than a date-scoped one, and settlement confirmation stays timer-driven rather than file-acknowledged; discrepancies raise alerts and metrics but have no ops workflow (no case management, no repair)
 - **PCI scope**: card tokenization/vaulting and **SCA/3DS** (PSD2) are absent
 - **payout rails**: disbursement stops at `PAYOUT_CLEARING` — no bank file/SEPA integration, payout confirmation is a T+N milestone rather than a bank acknowledgment
 - **scale/ops**: time-partitioning and archival for the append-only tables, distributed tracing, leader election for scheduled jobs, rate limiting, API-key rotation/scopes
