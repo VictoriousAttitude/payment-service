@@ -9,10 +9,10 @@ import java.time.temporal.ChronoUnit
 /**
  * Exports the live double-entry ledger as the movement-level CSV the external
  * `recon` engine consumes, so the oracle reconciles the real database instead
- * of a fixture. This is the JVM half of the reconciliation seam; the matching,
- * windowing and discrepancy classification stay in the independent Python
- * implementation on purpose (a second, correlated JVM implementation would not
- * be an independent oracle).
+ * of a fixture. The same extract feeds [SettlementFileReconciler], the online
+ * operational control that matches uploaded acquirer files; the Python engine
+ * remains the independent offline oracle, and the three-way check requires
+ * both verdicts on the same file to agree.
  *
  * Lives in the settlement module, which already depends on payment and may
  * depend on ledger: a source module reading both, never a cycle.
