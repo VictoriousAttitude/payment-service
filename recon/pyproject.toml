@@ -15,6 +15,7 @@ dependencies = []
 [project.scripts]
 recon = "recon.cli:main"
 procsim = "recon.procsim.cli:main"
+anchorverify = "recon.anchorverify:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0", "hypothesis>=6.100", "mypy>=1.10", "ruff>=0.5"]
@@ -50,4 +51,6 @@ pytest_add_cli_args_test_selection = [
     "tests/test_money.py",
     "tests/test_reconcile.py",
     "tests/test_properties.py",
+    "tests/test_merkle.py",
+    "tests/test_anchor.py",
 ]
