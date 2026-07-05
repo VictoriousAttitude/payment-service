@@ -9,7 +9,7 @@ Kotlin, Spring Boot 3, PostgreSQL. Every design decision is spelled out with its
 
 ## ledger integrity: defense in depth
 
-Correctness of the money is enforced at four independent layers, so a fault that slips one layer is still caught by the next. This is the core idea of the project.
+Correctness of the money is enforced at five independent layers, so a fault that slips one layer is still caught by the next. This is the core idea of the project.
 
 ```mermaid
 flowchart TB
@@ -18,13 +18,15 @@ flowchart TB
     pg[("PostgreSQL<br/>2 constraint triggers at commit<br/>append only V7 V11, balance V15 V18<br/>terminal absorbing V16, ceiling V17<br/>payable floor V20")]
     recon["3 scheduled reconciliation oracle<br/>per currency and global balance<br/>amount invariant sweep"]
     oracle["4 external oracle in Python<br/>ledger vs processor settlement<br/>three way reconciliation"]
+    anchor["5 epoch merkle anchoring<br/>rfc 6962 roots, hash chained<br/>independent python verifier"]
 
     write --> app --> pg
     pg --> recon
     pg --> oracle
+    pg --> anchor
 ```
 
-Layer 1 rejects a bad write before it is sent. Layer 2 makes a bad write impossible to commit, enforced in the database below the application. Layer 3 sweeps the committed ledger on a schedule for any anomaly the first two missed. Layer 4 compares the ledger against the processor settlement file, the one input that is genuinely independent of this codebase.
+Layer 1 rejects a bad write before it is sent. Layer 2 makes a bad write impossible to commit, enforced in the database below the application. Layer 3 sweeps the committed ledger on a schedule for any anomaly the first two missed. Layer 4 compares the ledger against the processor settlement file, the one input that is genuinely independent of this codebase. Layer 5 makes the committed history itself tamper-evident: entries are sealed under chained Merkle roots, so even a superuser edit below every other layer is exposed by recomputation.
 
 ## architecture
 
@@ -176,6 +178,8 @@ All `/api/v1/payments/**` and `/api/v1/merchants/**` requests require an `X-Api-
 | POST | `/api/v1/settlement-files?filename=...` | ingest an acquirer settlement file (raw `text/csv` body); idempotent by content sha-256: 201 fresh verdict, 200 replayed verdict, 413 over the size cap |
 | GET | `/api/v1/settlement-files` and `/{id}` | ingestion verdicts; detail includes the persisted discrepancies |
 | GET | `/api/v1/settlement-extract` | ledger movement CSV for the offline recon oracle |
+| GET | `/api/v1/ledger-anchors` and `/{epoch}/leaves` | anchor chain + per-epoch leaf CSV, the exact input of the offline Python verifier |
+| GET | `/api/v1/ledger-anchors/verify` | recompute every epoch root and chain link from the live ledger; tamper-evidence report |
 | GET | `/actuator/health` `/actuator/prometheus` | health + metrics |
 | GET | `/api/v1/api-docs` `/swagger-ui.html` | OpenAPI 3.0 + Swagger UI |
 
@@ -185,6 +189,7 @@ All `/api/v1/payments/**` and `/api/v1/merchants/**` requests require an `X-Api-
 - MDC correlation: a request-id filter sets/echoes `X-Request-Id`; capture/refund/callback bind `txnId` — log pattern surfaces both
 - reconciliation runs on a schedule and emits a single `RECONCILIATION_ALERT` error line per anomaly category — a zero-infra alerting seam
 - settlement-file ingestion mirrors the same seam: `settlement.file.healthy` gauge, `settlement.files.ingested{result}` and per-type `settlement.file.discrepancies{type}` counters, one `SETTLEMENT_FILE_ALERT` error line per bad file
+- ledger anchoring: `ledger.anchor.healthy` gauge, `ledger.anchors.created` / `ledger.anchor.leaves` counters, one `LEDGER_ANCHOR_ALERT` error line when verification finds tamper evidence
 
 ## tech stack
 
@@ -206,7 +211,9 @@ src/main/kotlin/com/paymentservice/
 ├── auth/             # ApiKeyAuthFilter (X-Api-Key), ApiKeyHasher (sha-256 at rest)
 ├── config/           # GlobalExceptionHandler, RequestIdFilter (MDC correlation)
 ├── shared/           # kernel: ErrorResponse, MERCHANT_ID_ATTRIBUTE, PaymentAccessDeniedException
-├── ledger/           # LedgerEntry (immutable), LedgerService (fees, balances), LedgerRepository
+├── ledger/           # LedgerEntry (immutable), LedgerService (fees, balances), epoch merkle
+│                     # anchoring (rfc 6962 tree, canonical leaf codec, @Scheduled sealing,
+│                     # verification + leaf export endpoints)
 ├── merchant/         # Merchant, MerchantController (balance), Merchant exceptions
 ├── payment/
 │   ├── dto/          # CreatePaymentRequest, PaymentResponse
@@ -227,10 +234,10 @@ src/main/kotlin/com/paymentservice/
 
 ## testing
 
-35 test classes, 232 tests, all green. Integration tests run against real PostgreSQL via Testcontainers.
+41 test classes, 259 tests, all green. Integration tests run against real PostgreSQL via Testcontainers.
 
-- **unit**: state machine transitions/terminals (`PaymentStatusTest`), fee rounding direction (`LedgerFeeTest`), money model and ISO 4217 exponents (`MoneyTest`), settlement movement projection (`SettlementExtractorTest`), acquirer CSV strict parsing (`AcquirerCsvParserTest`), pure file reconciliation semantics incl. window boundary and currency short-circuit (`SettlementFileReconcilerTest`), HMAC signing + replay window (`WebhookSignerTest`), dispute state machine (`DisputeStatusTest`), module boundaries (`ModularityTest`)
-- **integration**: full lifecycle + ledger/balance math, idempotency + concurrent double-capture (409), partial and multi capture with partial refund, authorization void and expiry, disputes and chargebacks with ledger clawback (pre- and post-settlement), outbox concurrency (one winner via `SKIP LOCKED`) + backoff/dead-letter, signed-webhook acceptance/rejection, settlement split + reserve hold/release, payout lifecycle + concurrent double-payout race (row lock, one winner), ledger export to the recon movement CSV, settlement-file ingestion (sha dedup, persisted verdicts, upload/inspection endpoints) + a fault matrix proving every discrepancy class is classified against the live ledger, append-only history immutability, the deferred balance/terminal/ceiling/payable-floor constraint triggers, provider retry and circuit breaker, auth + ownership (401/403/404), reconciliation, prometheus counters
+- **unit**: state machine transitions/terminals (`PaymentStatusTest`), fee rounding direction (`LedgerFeeTest`), money model and ISO 4217 exponents (`MoneyTest`), settlement movement projection (`SettlementExtractorTest`), acquirer CSV strict parsing (`AcquirerCsvParserTest`), pure file reconciliation semantics incl. window boundary and currency short-circuit (`SettlementFileReconcilerTest`), RFC 6962 tree, canonical leaf codec and chain hashing with golden vectors pinned identically in the Python verifier (`MerkleTreeTest`, `CanonicalLeafCodecTest`, `AnchorChainTest`, `AnchorLeafCsvTest`), HMAC signing + replay window (`WebhookSignerTest`), dispute state machine (`DisputeStatusTest`), module boundaries (`ModularityTest`)
+- **integration**: full lifecycle + ledger/balance math, idempotency + concurrent double-capture (409), partial and multi capture with partial refund, authorization void and expiry, disputes and chargebacks with ledger clawback (pre- and post-settlement), outbox concurrency (one winner via `SKIP LOCKED`) + backoff/dead-letter, signed-webhook acceptance/rejection, settlement split + reserve hold/release, payout lifecycle + concurrent double-payout race (row lock, one winner), ledger export to the recon movement CSV, settlement-file ingestion (sha dedup, persisted verdicts, upload/inspection endpoints) + a fault matrix proving every discrepancy class is classified against the live ledger, epoch anchoring (explicit membership, chained roots) + superuser tamper drills proving entry and anchor mutations surface as root/chain mismatches, append-only history immutability, the deferred balance/terminal/ceiling/payable-floor constraint triggers, provider retry and circuit breaker, auth + ownership (401/403/404), reconciliation, prometheus counters
 - **mutation**: pitest over the money and security core (`./gradlew pitest`), and the Python recon core via `mutmut` with a zero survivor gate in CI
 
 ```bash
@@ -307,9 +314,48 @@ curl -s http://localhost:8080/api/v1/settlement-files/<ID> | jq '.discrepancies'
 
 Matching joins on the extract's reference grain, per (transaction, kind) with `:refund`/`:chargeback` suffixes, not ARN-level: two transactions sharing a provider reference correctly surface as a ledger-side `DUPLICATE_REFERENCE`. Ledger movements newer than the T+2 window that are absent from the file are pending, not discrepancies. A re-upload of identical bytes returns the persisted verdict (idempotent by content sha-256).
 
+## ledger anchoring: tamper evidence
+
+The V7 trigger stops the application from mutating history, but a superuser edit or a tampered backup-restore is silent. Epoch Merkle anchoring (the Certificate Transparency / QLDB pattern) makes the committed history tamper-evident: on a schedule, every ledger entry older than a lag window and not yet anchored is sealed into an epoch under an RFC 6962 Merkle root, and each root is hash-chained to its predecessor from a genesis of 64 zeros. Attest-only: anchoring never gates writes; any later change to an anchored row, or to an anchor itself, is exposed by recomputation.
+
+Two design points worth stating:
+
+- **membership is explicit** (one leaf row per entry), not a serial range: commit order differs from assignment order, so a range could be sealed while a long transaction still owes it a row. A late-committing entry simply lands in the next epoch (Trillian's sequencer idea)
+- **the canonical leaf encoding is a byte contract**: pipe-joined restricted columns with the free-text description last behind a null/present marker, so the encoding is injective without escaping; null and empty descriptions hash differently
+
+Two verifiers that share nothing but golden test vectors recompute every leaf hash, epoch root and chain link from the raw entries, and must agree: `GET /api/v1/ledger-anchors/verify` online, and the zero-dependency Python `anchorverify` (in `recon/`, under the same mutation gate) offline. Verification feeds each anchor's stored chain hash forward, so a corrupted anchor flags itself and its immediate successor without cascading a false alarm over every later epoch.
+
+Runbook, with the app running and at least one anchored epoch (epochs seal every 5 minutes by default; `ANCHOR_INTERVAL_MS`, `ANCHOR_INITIAL_DELAY_MS` and `ANCHOR_LAG_SECONDS` shorten the wait for a demo):
+
+```bash
+# 1. export the anchor chain and each epoch's leaves
+curl -s http://localhost:8080/api/v1/ledger-anchors -o anchors.json
+mkdir -p leaves
+for e in $(jq -r '.[].epoch' anchors.json); do
+  curl -s "http://localhost:8080/api/v1/ledger-anchors/$e/leaves" -o "leaves/$e.csv"
+done
+
+# 2. offline verifier recomputes everything from genesis: CLEAN, exit 0
+anchorverify --anchors anchors.json --leaves-dir leaves; echo "exit: $?"
+
+# 3. tamper below every application control, as a superuser
+docker compose exec db psql -U postgres -d payments -c \
+  "ALTER TABLE ledger_entries DISABLE TRIGGER trg_ledger_entries_immutable;
+   UPDATE ledger_entries SET amount = amount + 1
+    WHERE id = (SELECT entry_id FROM ledger_anchor_leaves LIMIT 1);
+   ALTER TABLE ledger_entries ENABLE TRIGGER trg_ledger_entries_immutable;"
+
+# 4. both verifiers flag the same epoch with ROOT_MISMATCH
+curl -s http://localhost:8080/api/v1/ledger-anchors/verify | jq .
+for e in $(jq -r '.[].epoch' anchors.json); do
+  curl -s "http://localhost:8080/api/v1/ledger-anchors/$e/leaves" -o "leaves/$e.csv"
+done
+anchorverify --anchors anchors.json --leaves-dir leaves; echo "exit: $?"   # TAMPER EVIDENCE, exit 1
+```
+
 ## database schema
 
-21 Flyway migrations (`hibernate.ddl-auto: validate`, Flyway owns the schema):
+22 Flyway migrations (`hibernate.ddl-auto: validate`, Flyway owns the schema):
 
 | migration | change |
 |-----------|--------|
@@ -334,6 +380,7 @@ Matching joins on the extract's reference grain, per (transaction, kind) with `:
 | `V19` | `payouts` + `reserve_holds` for the settlement split and disbursement lifecycle |
 | `V20` | deferred constraint trigger: a payout never drives the payable balance negative |
 | `V21` | `settlement_files` (unique content sha) + `settlement_file_discrepancies` for ingestion verdicts |
+| `V22` | `ledger_anchors` (chained epoch roots) + `ledger_anchor_leaves` (explicit membership), both append-only by trigger |
 
 ## production gaps / next steps
 
@@ -342,4 +389,5 @@ This demonstrates the correctness and operability primitives. Real card processi
 - **real acquirer/network integration**: the provider is a simulator. Settlement-file ingestion accepts a simplified Stripe-style CSV over REST rather than SFTP/AS2 delivery, matches on provider reference rather than ARN (and without quoting or free-text fields a real acquirer format needs), reconciles against a full-ledger extract per file rather than a date-scoped one, and settlement confirmation stays timer-driven rather than file-acknowledged; discrepancies raise alerts and metrics but have no ops workflow (no case management, no repair)
 - **PCI scope**: card tokenization/vaulting and **SCA/3DS** (PSD2) are absent
 - **payout rails**: disbursement stops at `PAYOUT_CLEARING` — no bank file/SEPA integration, payout confirmation is a T+N milestone rather than a bank acknowledgment
+- **anchoring trust root**: the anchor chain lives in the same database it attests to, so an attacker who can rewrite entries and recompute every anchor from genesis is undetectable; real tamper-evidence publishes the chain head to an external WORM store (object-lock bucket, transparency log) and anchoring is attest-only with no automated response workflow
 - **scale/ops**: time-partitioning and archival for the append-only tables, distributed tracing, leader election for scheduled jobs, rate limiting, API-key rotation/scopes
