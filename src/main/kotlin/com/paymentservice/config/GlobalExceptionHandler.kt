@@ -4,6 +4,7 @@ import com.paymentservice.dispute.DisputeAlreadyOpenException
 import com.paymentservice.dispute.DisputeNotAllowedException
 import com.paymentservice.dispute.DisputeNotFoundException
 import com.paymentservice.dispute.InvalidDisputeTransitionException
+import com.paymentservice.ledger.AnchorNotFoundException
 import com.paymentservice.ledger.LedgerImbalanceException
 import com.paymentservice.merchant.MerchantNotActiveException
 import com.paymentservice.merchant.MerchantNotFoundException
@@ -161,6 +162,13 @@ class GlobalExceptionHandler {
     fun handleSettlementFileTooLarge(e: SettlementFileTooLargeException): ResponseEntity<ErrorResponse> {
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(
             ErrorResponse("SETTLEMENT_FILE_TOO_LARGE", e.message ?: "Settlement file too large")
+        )
+    }
+
+    @ExceptionHandler(AnchorNotFoundException::class)
+    fun handleAnchorNotFound(e: AnchorNotFoundException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+            ErrorResponse("ANCHOR_NOT_FOUND", e.message ?: "Ledger anchor not found")
         )
     }
 
