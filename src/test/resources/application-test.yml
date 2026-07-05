@@ -16,6 +16,12 @@ payment:
     interval-ms: 3600000
     initial-delay-ms: 3600000
     delay-minutes: 0
+  anchor:
+    # Park the anchoring batch; tests drive anchorPending() directly.
+    # lag-seconds 0 makes freshly committed entries immediately anchorable.
+    interval-ms: 3600000
+    initial-delay-ms: 3600000
+    lag-seconds: 0
   reserve:
     # Park the release batch; tests drive releaseMatured() directly. hold-days 0
     # makes a fresh hold immediately releasable when the test runs the sweep.

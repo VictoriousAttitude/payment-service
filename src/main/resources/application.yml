@@ -74,6 +74,14 @@ payment:
     window-days: ${SETTLEMENT_FILE_WINDOW_DAYS:2}
     # Upload size cap; uploads over this are rejected with 413 before parsing.
     max-bytes: ${SETTLEMENT_FILE_MAX_BYTES:1048576}
+  anchor:
+    # Epoch Merkle anchoring: each run seals every ledger entry older than
+    # lag-seconds and not yet anchored into a new RFC 6962 epoch, chained to
+    # the previous one. Attest-only: anchors never gate writes; tampering is
+    # exposed by recomputation (verify endpoint / Python anchorverify).
+    interval-ms: ${ANCHOR_INTERVAL_MS:300000}
+    initial-delay-ms: ${ANCHOR_INITIAL_DELAY_MS:60000}
+    lag-seconds: ${ANCHOR_LAG_SECONDS:60}
   reserve:
     # Rolling reserve withheld at settlement against chargeback exposure:
     # rate in basis points of the settled net (floored, remainder to the
