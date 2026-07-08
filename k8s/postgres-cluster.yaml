@@ -1,0 +1,54 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: payments-db
+  namespace: payments
+spec:
+  # Three instances: one primary + two standbys. Survives losing a node without
+  # data loss and leaves a standby to promote while the failed one recovers.
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:17
+
+  # Roll instance upgrades automatically (standbys first, then a switchover to a
+  # patched standby) so a Postgres minor-version bump is not a manual outage.
+  primaryUpdateStrategy: unsupervised
+
+  # Quorum synchronous replication: a COMMIT is not acknowledged to the client
+  # until at least one standby has persisted the WAL record. This is the load-
+  # bearing property for a ledger under the chaos harness (step 4) - a payment
+  # that returned 2xx cannot vanish when the primary is killed, because its WAL
+  # is already on a standby that gets promoted. synchronous_commit=on makes the
+  # primary wait for that standby ack.
+  minSyncReplicas: 1
+  maxSyncReplicas: 1
+  postgresql:
+    parameters:
+      synchronous_commit: "on"
+
+  bootstrap:
+    initdb:
+      database: payments
+      owner: payments
+      # Create the pgcrypto extension as the superuser at bootstrap so the app
+      # can connect as the NON-superuser owner `payments`. Running as a non-
+      # superuser is a security feature here, not a limitation: the V7 append-
+      # only trigger only constrains non-superusers (a superuser bypasses
+      # triggers), so a least-privilege app role is what makes the immutable-
+      # ledger guarantee real. V9's `CREATE EXTENSION IF NOT EXISTS` then no-ops.
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS pgcrypto
+
+  storage:
+    size: 2Gi
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+  # Expose Postgres metrics for Prometheus. Flip to true once the Prometheus
+  # Operator CRDs (PodMonitor) are installed in the cluster.
+  monitoring:
+    enablePodMonitor: false

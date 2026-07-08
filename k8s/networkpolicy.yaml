@@ -1,0 +1,43 @@
+# Ingress policies for the app tier. NOTE: kind's default CNI (kindnet) does not
+# ENFORCE NetworkPolicy - it accepts the objects but is a no-op. Run on a CNI
+# that enforces policy (Calico, Cilium) to see them bite. The Postgres-side
+# restriction lives in postgres-networkpolicy.yaml (not applied by default, so a
+# mis-scoped selector cannot wedge the CNPG operator on first apply).
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress-app
+  namespace: payments
+spec:
+  # Selecting the app pods with an empty ingress rule set denies ALL ingress to
+  # them by default; the allow policy below re-opens exactly port 8080. Postgres
+  # pods are intentionally NOT selected here so this cannot disrupt CNPG.
+  podSelector:
+    matchLabels:
+      app: payment-service
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-app-http
+  namespace: payments
+spec:
+  podSelector:
+    matchLabels:
+      app: payment-service
+  policyTypes:
+    - Ingress
+  ingress:
+    # HTTP (API + actuator scrape) from within the namespace. Tighten in a real
+    # cluster to the ingress-controller namespace for /api and the monitoring
+    # namespace for /actuator; both are namespaceSelector additions here.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: payments
+      ports:
+        - protocol: TCP
+          port: 8080

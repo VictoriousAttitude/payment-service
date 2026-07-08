@@ -1,0 +1,29 @@
+# Strategic-merge patch that turns on CNPG continuous backup to the WORM bucket.
+# Applied by backup/kustomization.yaml on top of the base Cluster. CNPG then
+# archives WAL continuously and takes base backups on the ScheduledBackup
+# cadence, giving point-in-time recovery whose history cannot be rewritten.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: payments-db
+  namespace: payments
+spec:
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://payments-backups/
+      endpointURL: http://minio.payments.svc:9000
+      s3Credentials:
+        accessKeyId:
+          name: minio-credentials
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: minio-credentials
+          key: SECRET_ACCESS_KEY
+      wal:
+        compression: gzip
+      data:
+        compression: gzip
+    # Deliberately NO retentionPolicy: the bucket is Object-Locked in COMPLIANCE
+    # mode, so the operator could not prune expired backups even if asked -
+    # object lifecycle is the store's job, not the operator's. That immutability
+    # is the point.

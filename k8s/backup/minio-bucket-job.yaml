@@ -1,0 +1,56 @@
+# Creates the backup bucket with Object Lock ENABLED and a default COMPLIANCE
+# retention. Object Lock can only be turned on at bucket creation (it implies
+# versioning), so this must run before the first CNPG backup. COMPLIANCE mode
+# means no one - not even the MinIO root user, and not a compromised DB role -
+# can delete or overwrite an object before its retention expires. That is the
+# WORM property that makes the off-box ledger backup tamper-proof.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-create-bucket
+  namespace: payments
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        app: minio-setup
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mc
+          image: quay.io/minio/mc:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: ACCESS_KEY_ID
+            - name: SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: SECRET_ACCESS_KEY
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              # Wait for MinIO to accept connections, then configure the alias.
+              until mc alias set local http://minio.payments.svc:9000 "$ACCESS_KEY_ID" "$SECRET_ACCESS_KEY"; do
+                echo "waiting for minio..."; sleep 2
+              done
+              # --with-lock enables Object Lock (and versioning); idempotent.
+              mc mb --with-lock --ignore-existing local/payments-backups
+              # Default WORM retention on every new object written to the bucket.
+              mc retention set --default COMPLIANCE 30d local/payments-backups
+              mc retention info --default local/payments-backups

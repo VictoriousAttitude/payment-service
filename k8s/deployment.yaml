@@ -1,0 +1,120 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+  namespace: payments
+  labels:
+    app: payment-service
+spec:
+  # Two replicas is the whole reason ShedLock exists: both nodes run the same
+  # schedulers, and the DB locks keep every tick single-execution cluster-wide.
+  replicas: 2
+  selector:
+    matchLabels:
+      app: payment-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Zero-downtime rollout: never drop below the desired count, add one new
+      # pod at a time. A new pod must pass readiness (which includes the DB)
+      # before an old one is retired, so a bad image or a failed migration
+      # stalls the rollout instead of taking the service down.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: payment-service
+    spec:
+      # preStop drain (10s) + graceful budget (30s in application.yml) must fit
+      # inside this window, or the kubelet SIGKILLs mid-drain.
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: payment-service
+          # Built locally and side-loaded (kind load / minikube image load); see
+          # k8s/README.md. Never pull a floating tag in a real cluster.
+          image: payment-service:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: payment-service-config
+          env:
+            # Postgres credentials come straight from the Secret CNPG generates
+            # for the application role - they are never written into our config.
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: payments-db-app
+                  key: username
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: payments-db-app
+                  key: password
+            - name: WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: payment-service-secrets
+                  key: WEBHOOK_SECRET
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # Startup gates liveness/readiness: app boot (Flyway + Camunda engine +
+          # JPA validate) can take a while, and we must not let a slow-but-healthy
+          # start trip the liveness probe into a crash loop. Up to 150s to come up.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          # Liveness = process is wedged, restart it. Deliberately the liveness
+          # group (livenessState only, NO db) so a Postgres failover does not
+          # restart every pod at once.
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          # Readiness = can this pod serve traffic right now. Includes the db
+          # check, so a pod that lost the primary is pulled from the Service
+          # endpoints until the -rw Service re-points to the new primary.
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              # Sleep so the Service endpoint removal propagates through kube-proxy
+              # BEFORE SIGTERM starts the graceful shutdown - otherwise there is a
+              # window where the pod is terminating but still receiving new traffic.
+              exec:
+                command: ["sh", "-c", "sleep 10"]
+          volumeMounts:
+            # readOnlyRootFilesystem is true, so give the JVM/Tomcat a writable
+            # scratch dir for temp files and work dirs.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: payment-service-config
+  namespace: payments
+data:
+  # Point the datasource at the CNPG read-write Service. This Service always
+  # resolves to the current primary, so after a failover the app reconnects to
+  # the newly promoted primary with no config change (Hikari drops the stale
+  # connections and re-establishes against the new endpoint).
+  SPRING_DATASOURCE_URL: jdbc:postgresql://payments-db-rw.payments.svc:5432/payments
+  # Container-aware heap: size the JVM to a fraction of the cgroup memory limit
+  # instead of the node's total RAM, and turn an OOM into a fast exit (the
+  # kubelet restarts the pod) rather than a degraded, thrashing process.
+  JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError"
+  # The embedded provider simulator posts callbacks back through the cluster
+  # Service rather than localhost.
+  WEBHOOK_CALLBACK_URL: http://payment-service.payments.svc/api/v1/webhooks/provider-callback

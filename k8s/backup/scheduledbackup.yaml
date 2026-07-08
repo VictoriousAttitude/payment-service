@@ -1,0 +1,11 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: payments-db-daily
+  namespace: payments
+spec:
+  # CNPG cron format has a leading seconds field: 00:00 every day.
+  schedule: "0 0 0 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: payments-db

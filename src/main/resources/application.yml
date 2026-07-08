@@ -19,8 +19,21 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  lifecycle:
+    # Upper bound the graceful-shutdown wait. On SIGTERM the web server stops
+    # accepting new requests and drains in-flight ones within this window before
+    # the context closes; it only WAITS while requests are active, so idle pods
+    # (and finished tests) shut down immediately.
+    timeout-per-shutdown-phase: 30s
+
 server:
   port: 8080
+  # Finish in-flight requests on SIGTERM instead of dropping them. Paired in the
+  # Deployment with a preStop delay (so endpoint deregistration wins the race
+  # against SIGTERM) and a terminationGracePeriodSeconds larger than the budget
+  # above, a rolling update or a chaos pod-kill drains cleanly rather than
+  # failing active payments mid-flight.
+  shutdown: graceful
 
 management:
   endpoints:
@@ -29,6 +42,20 @@ management:
         # Scrape target for Prometheus. Actuator is not behind the API-key filter
         # (it guards only /api/v1/**), so restrict it at the network layer in prod.
         include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      # Kubernetes probe groups at /actuator/health/{liveness,readiness}.
+      # Liveness = livenessState ONLY and deliberately excludes the database: a
+      # brief primary failover must not trip every pod's liveness at once and
+      # trigger a cluster-wide restart storm. Readiness DOES include db, because
+      # every request touches the ledger - a pod that cannot reach Postgres is
+      # pulled from the Service and returns fast 503s instead of hanging, and the
+      # CNPG -rw Service re-points to the new primary within seconds.
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
   metrics:
     tags:
       application: payment-service

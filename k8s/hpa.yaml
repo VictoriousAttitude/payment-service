@@ -1,0 +1,24 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: payment-service
+  namespace: payments
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: payment-service
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  # NOTE: scaling out multiplies the request-serving capacity but NOT the batch
+  # work - every @Scheduled tick is still ShedLock-gated to one node per
+  # interval, so 6 replicas do not settle/anchor/fold 6x. HPA and the locks are
+  # complementary: horizontal for the online path, single-execution for the
+  # background path. Requires metrics-server to be installed.

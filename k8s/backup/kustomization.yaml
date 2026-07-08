@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# WORM-backup overlay. `kubectl apply -k k8s/backup/` deploys the whole base
+# PLUS MinIO, the object-locked bucket Job, the ScheduledBackup, and patches the
+# CNPG Cluster to archive to the bucket. Apply order within is handled by the
+# operator/Job retries (the bucket Job waits for MinIO; CNPG reconciles backup
+# config once the bucket exists).
+resources:
+  - ../
+  - minio-credentials.yaml
+  - minio.yaml
+  - minio-bucket-job.yaml
+  - scheduledbackup.yaml
+
+patches:
+  - path: cluster-backup-patch.yaml
+    target:
+      group: postgresql.cnpg.io
+      version: v1
+      kind: Cluster
+      name: payments-db

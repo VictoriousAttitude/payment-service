@@ -1,0 +1,36 @@
+# OPTIONAL - restricts who may reach Postgres. Apply AFTER the CNPG cluster is
+# healthy and adjust the operator-namespace selector to your install (default
+# operator namespace is `cnpg-system`). Kept out of the base kustomization so a
+# mis-scoped selector cannot wedge cluster bootstrap or failover on first apply.
+#
+#   kubectl apply -f k8s/postgres-networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: restrict-postgres-ingress
+  namespace: payments
+spec:
+  # CNPG labels every instance pod with cnpg.io/cluster=<clusterName>.
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: payments-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # 1) The application pods (client connections on 5432).
+        - podSelector:
+            matchLabels:
+              app: payment-service
+        # 2) The other CNPG instances (streaming replication + switchover).
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: payments-db
+        # 3) The CNPG operator (instance management / status). Adjust the label
+        #    to match your operator namespace if it is not cnpg-system.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+      ports:
+        - protocol: TCP
+          port: 5432

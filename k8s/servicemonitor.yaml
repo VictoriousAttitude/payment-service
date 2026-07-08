@@ -1,0 +1,21 @@
+# OPTIONAL - requires the Prometheus Operator CRDs. Not in kustomization.yaml so
+# the base apply does not fail on a missing CRD. Apply with:
+#   kubectl apply -f k8s/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: payment-service
+  namespace: payments
+  labels:
+    app: payment-service
+spec:
+  selector:
+    matchLabels:
+      app: payment-service
+  endpoints:
+    - port: http
+      # The app already exposes Micrometer/Prometheus here (see application.yml
+      # management.endpoints). Actuator is not behind the API-key filter, so a
+      # NetworkPolicy is the control that keeps this scrape path internal.
+      path: /actuator/prometheus
+      interval: 30s

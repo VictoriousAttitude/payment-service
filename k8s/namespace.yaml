@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: payments
+  labels:
+    # Enforce the restricted Pod Security Standard for everything in the
+    # namespace: no privileged pods, no host namespaces, runAsNonRoot required,
+    # seccomp RuntimeDefault, capabilities dropped. The Deployment's security
+    # context is written to satisfy this; if it regresses, admission rejects it.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted

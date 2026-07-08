@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Core runnable slice: `kubectl apply -k k8s/` after the CNPG operator is
+# installed and the image is side-loaded. Optional add-ons are applied
+# separately so a missing CRD (Prometheus Operator) or a strict CNI cannot break
+# the base apply:
+#   - servicemonitor.yaml          (needs the Prometheus Operator CRDs)
+#   - postgres-networkpolicy.yaml  (apply once the cluster is verified healthy)
+#   - backup/                      (MinIO + WORM object-locked backups)
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - postgres-cluster.yaml
+  - deployment.yaml
+  - service.yaml
+  - pdb.yaml
+  - hpa.yaml
+  - networkpolicy.yaml

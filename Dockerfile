@@ -16,8 +16,12 @@ RUN ./gradlew bootJar --no-daemon -x test
 FROM eclipse-temurin:17-jre
 WORKDIR /app
 
-RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
-USER appuser
+# Fixed numeric UID so the Deployment can pin runAsUser: 10001 and the kubelet
+# can verify runAsNonRoot at admission (a --system username has an unpredictable
+# UID the restricted Pod Security Standard cannot check).
+RUN groupadd --system --gid 10001 appgroup \
+    && useradd --system --uid 10001 --gid appgroup appuser
+USER 10001
 
 COPY --from=build /app/build/libs/*.jar app.jar
 
