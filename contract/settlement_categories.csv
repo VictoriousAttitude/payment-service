@@ -1,0 +1,9 @@
+reference,reporting_category,currency,gross,fee
+cap-charge,charge,EUR,100.00,2.00
+cap-payment,payment,USD,50.00,1.00
+ref-refund,refund,EUR,-30.00,-0.60
+ref-payment_refund,payment_refund,USD,-5.00,-0.10
+cb-dispute,dispute,EUR,-100.00,15.00
+cb-chargeback,chargeback,USD,-50.00,15.00
+jpy-charge,charge,JPY,1234,24
+bhd-charge,charge,BHD,12.345,0.246

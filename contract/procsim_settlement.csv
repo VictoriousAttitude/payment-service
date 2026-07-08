@@ -1,0 +1,5 @@
+reference,reporting_category,currency,gross,fee
+txn-1,charge,EUR,100.00,2.00
+txn-1:refund,refund,EUR,-30.00,-0.60
+txn-2,charge,JPY,1234,24
+txn-3:chargeback,dispute,EUR,-100.00,15.00
