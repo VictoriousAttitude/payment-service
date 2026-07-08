@@ -8,7 +8,9 @@ import java.util.UUID
 
 @Service
 class LedgerService(
-    private val ledgerRepository: LedgerRepository
+    private val ledgerRepository: LedgerRepository,
+    private val snapshotRepository: BalanceSnapshotRepository,
+    private val cursorRepository: SnapshotCursorRepository
 ) {
 
     companion object {
@@ -383,8 +385,9 @@ class LedgerService(
     }
 
     /** Net payable (available-for-payout) balance for a merchant in one currency. */
+    @Transactional(readOnly = true)
     fun getPayableBalance(merchantId: UUID, currency: String): Long =
-        ledgerRepository.computeBalance(AccountType.MERCHANT_PAYABLE, merchantId, currency.uppercase())
+        accountBalance(AccountType.MERCHANT_PAYABLE, merchantId, currency.uppercase())
 
     /** Per-currency balances of any account - pending, payable, reserve, clearing. */
     fun getBalancesByCurrency(accountType: AccountType, accountId: UUID): List<CurrencyBalance> =
@@ -394,8 +397,25 @@ class LedgerService(
     fun payableBalancesAtLeast(minimum: Long): List<AccountCurrencyBalance> =
         ledgerRepository.payableBalancesAtLeast(minimum)
 
-    fun getMerchantBalance(merchantId: UUID, currency: String): Long {
-        return ledgerRepository.computeBalance(AccountType.MERCHANT, merchantId, currency.uppercase())
+    @Transactional(readOnly = true)
+    fun getMerchantBalance(merchantId: UUID, currency: String): Long =
+        accountBalance(AccountType.MERCHANT, merchantId, currency.uppercase())
+
+    /**
+     * Balance via the rolling checkpoint: the folded snapshot (all entries at or
+     * before the cursor) plus a live SUM over only the entries after the cursor.
+     * Exact at every cursor value - before the first fold there is no snapshot
+     * row and the cursor sits at the epoch, so it degenerates to the full SUM.
+     * Read in one (read-only) transaction so cursor, snapshot and delta share a
+     * single MVCC snapshot: a concurrent fold cannot advance the cursor between
+     * the three reads and double-count the folded window.
+     */
+    private fun accountBalance(accountType: AccountType, accountId: UUID, currency: String): Long {
+        val cursor = cursorRepository.findById(SnapshotProcessor.CURSOR_ID).orElseThrow().asOf
+        val folded = snapshotRepository
+            .findByAccountTypeAndAccountIdAndCurrency(accountType, accountId, currency)
+            ?.net ?: 0L
+        return folded + ledgerRepository.netSince(accountType, accountId, currency, cursor)
     }
 
     fun getMerchantBalances(merchantId: UUID): List<CurrencyBalance> {

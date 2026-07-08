@@ -2,6 +2,7 @@ package com.paymentservice.ledger
 
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
+import java.time.Instant
 import java.util.UUID
 
 interface LedgerRepository : JpaRepository<LedgerEntry, UUID> {
@@ -123,6 +124,55 @@ interface LedgerRepository : JpaRepository<LedgerEntry, UUID> {
         AND le.entryType = com.paymentservice.ledger.EntryType.CREDIT
     """)
     fun sumRefunded(transactionId: UUID): Long
+
+    /**
+     * Net balance (credits - debits) for one account/currency over only the
+     * entries created strictly after [cutoff]: the live delta added on top of
+     * the folded snapshot. Mirrors [computeBalance] but bounded to the tail the
+     * snapshot has not yet absorbed, so a balance read costs O(entries since
+     * the last fold) instead of O(all history).
+     */
+    @Query("""
+        SELECT COALESCE(SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE 0 END), 0) -
+               COALESCE(SUM(CASE WHEN le.entryType = 'DEBIT' THEN le.amount ELSE 0 END), 0)
+        FROM LedgerEntry le
+        WHERE le.accountType = :accountType AND le.accountId = :accountId
+          AND le.currency = :currency AND le.createdAt > :cutoff
+    """)
+    fun netSince(accountType: AccountType, accountId: UUID, currency: String, cutoff: Instant): Long
+
+    /**
+     * Per-account debit/credit deltas for entries created in (previous, cutoff],
+     * one row per (account_type, account_id, currency): the fold window the
+     * snapshotter adds to the checkpoint each run.
+     */
+    @Query("""
+        SELECT new com.paymentservice.ledger.SnapshotDelta(
+            le.accountType, le.accountId, le.currency,
+            SUM(CASE WHEN le.entryType = 'DEBIT' THEN le.amount ELSE 0 END),
+            SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE 0 END))
+        FROM LedgerEntry le
+        WHERE le.createdAt > :previous AND le.createdAt <= :cutoff
+        GROUP BY le.accountType, le.accountId, le.currency
+    """)
+    fun aggregateBetween(previous: Instant, cutoff: Instant): List<SnapshotDelta>
+
+    /**
+     * Per-account debit/credit totals over all entries at or before [cutoff]:
+     * the exact checkpoint the snapshot table should hold at cursor = [cutoff].
+     * Reconciliation re-derives this and compares it to the materialized rows
+     * to detect snapshot drift.
+     */
+    @Query("""
+        SELECT new com.paymentservice.ledger.SnapshotDelta(
+            le.accountType, le.accountId, le.currency,
+            SUM(CASE WHEN le.entryType = 'DEBIT' THEN le.amount ELSE 0 END),
+            SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE 0 END))
+        FROM LedgerEntry le
+        WHERE le.createdAt <= :cutoff
+        GROUP BY le.accountType, le.accountId, le.currency
+    """)
+    fun aggregateUpTo(cutoff: Instant): List<SnapshotDelta>
 }
 
 /**
@@ -147,3 +197,16 @@ data class AccountCurrencyBalance(
 ) {
     val net: Long get() = totalCredits - totalDebits
 }
+
+/**
+ * Debit/credit totals for one (account_type, account_id, currency) over a
+ * created_at window: the unit the snapshotter folds and the reconciler
+ * re-derives.
+ */
+data class SnapshotDelta(
+    val accountType: AccountType,
+    val accountId: UUID,
+    val currency: String,
+    val totalDebits: Long,
+    val totalCredits: Long
+)

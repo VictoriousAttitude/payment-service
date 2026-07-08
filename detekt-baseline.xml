@@ -31,6 +31,7 @@
     <ID>TooGenericExceptionCaught:ReserveReleaseBatch.kt$ReserveReleaseBatch$e: Exception</ID>
     <ID>TooGenericExceptionCaught:SettlementBatch.kt$SettlementBatch$e: Exception</ID>
     <ID>TooManyFunctions:GlobalExceptionHandler.kt$GlobalExceptionHandler</ID>
+    <ID>TooManyFunctions:LedgerRepository.kt$LedgerRepository : JpaRepository</ID>
     <ID>TooManyFunctions:LedgerService.kt$LedgerService</ID>
     <ID>TooManyFunctions:PaymentService.kt$PaymentService</ID>
     <ID>UnusedParameter:GlobalExceptionHandler.kt$GlobalExceptionHandler$e: OptimisticLockingFailureException</ID>

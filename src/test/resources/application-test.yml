@@ -22,6 +22,12 @@ payment:
     interval-ms: 3600000
     initial-delay-ms: 3600000
     lag-seconds: 0
+  balance-snapshot:
+    # Park the fold batch; tests drive advance() directly. lag-seconds 0 makes
+    # freshly committed entries immediately foldable.
+    interval-ms: 3600000
+    initial-delay-ms: 3600000
+    lag-seconds: 0
   reserve:
     # Park the release batch; tests drive releaseMatured() directly. hold-days 0
     # makes a fresh hold immediately releasable when the test runs the sweep.

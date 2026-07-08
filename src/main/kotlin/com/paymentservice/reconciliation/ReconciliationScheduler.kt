@@ -62,12 +62,14 @@ class ReconciliationScheduler(
      */
     private fun alert(report: ReconciliationReport) {
         log.error(
-            "$ALERT_MARKER stuck={} missingLedgerEntries={} unbalanced={} amountMismatched={} globalBalanced={}",
+            "$ALERT_MARKER stuck={} missingLedgerEntries={} unbalanced={} amountMismatched={} " +
+                "globalBalanced={} snapshotDrift={}",
             report.stuckTransactions,
             report.transactionsWithoutLedgerEntries,
             report.unbalancedPostingGroups,
             report.amountMismatchedTransactions,
-            report.globalBalance.balanced
+            report.globalBalance.balanced,
+            report.snapshotDrift
         )
     }
 

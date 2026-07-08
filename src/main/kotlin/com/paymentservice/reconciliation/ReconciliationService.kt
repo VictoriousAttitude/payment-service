@@ -1,11 +1,15 @@
 package com.paymentservice.reconciliation
 
+import com.paymentservice.ledger.BalanceSnapshotRepository
 import com.paymentservice.ledger.CurrencyBalance
 import com.paymentservice.ledger.LedgerRepository
+import com.paymentservice.ledger.SnapshotCursorRepository
+import com.paymentservice.ledger.SnapshotProcessor
 import com.paymentservice.payment.PaymentStatus
 import com.paymentservice.payment.Transaction
 import com.paymentservice.payment.TransactionRepository
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -13,7 +17,9 @@ import java.util.UUID
 @Service
 class ReconciliationService(
     private val transactionRepository: TransactionRepository,
-    private val ledgerRepository: LedgerRepository
+    private val ledgerRepository: LedgerRepository,
+    private val snapshotRepository: BalanceSnapshotRepository,
+    private val cursorRepository: SnapshotCursorRepository
 ) {
 
     companion object {
@@ -84,14 +90,45 @@ class ReconciliationService(
     }
 
     /**
-     * Full reconciliation report: runs all checks and returns a summary.
+     * Q4: Does the balance acceleration still agree with the ledger? Re-derives
+     * the exact checkpoint (debit/credit totals over every entry at or before
+     * the snapshot cursor) and compares it to the materialized snapshot rows.
+     * The snapshot is a derived cache with no append-only trigger, so this is
+     * the only guard that a fold bug or a manual write left it out of step with
+     * the immutable ledger. Any result means balance reads could be wrong; the
+     * snapshot is safe to rebuild from scratch. Returns one line per drifting
+     * (account, currency).
      */
+    fun findSnapshotDrift(): List<String> {
+        val cursor = cursorRepository.findById(SnapshotProcessor.CURSOR_ID).orElseThrow().asOf
+        val expected = ledgerRepository.aggregateUpTo(cursor)
+            .associate { Triple(it.accountType, it.accountId, it.currency) to (it.totalDebits to it.totalCredits) }
+        val actual = snapshotRepository.findAll()
+            .associate { Triple(it.accountType, it.accountId, it.currency) to (it.totalDebits to it.totalCredits) }
+        return (expected.keys + actual.keys).mapNotNull { key ->
+            val (ed, ec) = expected[key] ?: (0L to 0L)
+            val (ad, ac) = actual[key] ?: (0L to 0L)
+            if (ed != ad || ec != ac) {
+                "${key.first}/${key.second}/${key.third} snapshot=($ad,$ac) ledger=($ed,$ec)"
+            } else {
+                null
+            }
+        }
+    }
+
+    /**
+     * Full reconciliation report: runs all checks and returns a summary. Read
+     * in one read-only transaction so every check - including the snapshot
+     * drift derivation - sees a single consistent MVCC view.
+     */
+    @Transactional(readOnly = true)
     fun runFullReconciliation(stuckThreshold: Duration = Duration.ofMinutes(30)): ReconciliationReport {
         val stuckTransactions = findStuckTransactions(stuckThreshold)
         val missingEntries = findTransactionsWithoutLedgerEntries()
         val unbalanced = findUnbalancedPostingGroups()
         val mismatchedAmounts = findTransactionsWithMismatchedAmounts()
         val globalBalance = verifyGlobalLedgerBalance()
+        val snapshotDrift = findSnapshotDrift()
 
         return ReconciliationReport(
             stuckTransactions = stuckTransactions.map { it.id },
@@ -99,11 +136,13 @@ class ReconciliationService(
             unbalancedPostingGroups = unbalanced,
             amountMismatchedTransactions = mismatchedAmounts,
             globalBalance = globalBalance,
+            snapshotDrift = snapshotDrift,
             healthy = stuckTransactions.isEmpty()
                     && missingEntries.isEmpty()
                     && unbalanced.isEmpty()
                     && mismatchedAmounts.isEmpty()
                     && globalBalance.balanced
+                    && snapshotDrift.isEmpty()
         )
     }
 }
@@ -120,5 +159,6 @@ data class ReconciliationReport(
     val unbalancedPostingGroups: List<UUID>,
     val amountMismatchedTransactions: List<UUID>,
     val globalBalance: GlobalBalanceResult,
+    val snapshotDrift: List<String>,
     val healthy: Boolean
 )

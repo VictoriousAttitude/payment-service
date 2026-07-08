@@ -82,6 +82,16 @@ payment:
     interval-ms: ${ANCHOR_INTERVAL_MS:300000}
     initial-delay-ms: ${ANCHOR_INITIAL_DELAY_MS:60000}
     lag-seconds: ${ANCHOR_LAG_SECONDS:60}
+  balance-snapshot:
+    # O(1) balance reads: each run folds every ledger entry older than
+    # lag-seconds into per-account debit/credit checkpoints and advances the
+    # cursor, so a balance read costs snapshot + SUM(entries after the cursor)
+    # instead of SUM(all history). Derived and rebuildable - reconciliation
+    # re-derives it from the ledger and flags drift; same commit-visibility lag
+    # as anchoring so only durably committed entries are folded.
+    interval-ms: ${BALANCE_SNAPSHOT_INTERVAL_MS:300000}
+    initial-delay-ms: ${BALANCE_SNAPSHOT_INITIAL_DELAY_MS:60000}
+    lag-seconds: ${BALANCE_SNAPSHOT_LAG_SECONDS:60}
   reserve:
     # Rolling reserve withheld at settlement against chargeback exposure:
     # rate in basis points of the settled net (floored, remainder to the
