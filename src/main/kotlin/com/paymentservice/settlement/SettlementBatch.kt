@@ -2,6 +2,7 @@ package com.paymentservice.settlement
 
 import com.paymentservice.payment.TransactionRepository
 import io.micrometer.core.instrument.MeterRegistry
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.data.domain.PageRequest
@@ -30,6 +31,7 @@ class SettlementBatch(
         fixedDelayString = "\${payment.settlement.interval-ms:300000}",
         initialDelayString = "\${payment.settlement.initial-delay-ms:30000}"
     )
+    @SchedulerLock(name = "settlement")
     fun settleEligible() {
         val cutoff = Instant.now().minus(Duration.ofMinutes(delayMinutes))
         val batch = transactionRepository.findSettlable(cutoff, PageRequest.of(0, BATCH_SIZE))

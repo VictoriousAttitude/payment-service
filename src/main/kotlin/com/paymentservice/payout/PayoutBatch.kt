@@ -1,6 +1,7 @@
 package com.paymentservice.payout
 
 import com.paymentservice.ledger.LedgerService
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Scheduled
@@ -26,6 +27,7 @@ class PayoutBatch(
         fixedDelayString = "\${payment.payout.interval-ms:300000}",
         initialDelayString = "\${payment.payout.initial-delay-ms:60000}"
     )
+    @SchedulerLock(name = "payout")
     fun payoutEligible() {
         val eligible = ledgerService.payableBalancesAtLeast(minimumAmount)
         for (balance in eligible) {

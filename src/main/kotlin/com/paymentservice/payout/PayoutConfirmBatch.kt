@@ -1,5 +1,6 @@
 package com.paymentservice.payout
 
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.data.domain.PageRequest
@@ -27,6 +28,7 @@ class PayoutConfirmBatch(
         fixedDelayString = "\${payment.payout.confirm-interval-ms:300000}",
         initialDelayString = "\${payment.payout.confirm-initial-delay-ms:60000}"
     )
+    @SchedulerLock(name = "payout-confirm")
     fun confirmSettled() {
         val cutoff = Instant.now().minus(Duration.ofMinutes(confirmDelayMinutes))
         val batch = payoutRepository.findConfirmable(cutoff, PageRequest.of(0, BATCH_SIZE))

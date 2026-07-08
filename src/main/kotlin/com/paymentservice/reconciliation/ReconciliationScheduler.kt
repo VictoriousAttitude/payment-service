@@ -1,6 +1,7 @@
 package com.paymentservice.reconciliation
 
 import io.micrometer.core.instrument.MeterRegistry
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Scheduled
@@ -41,6 +42,7 @@ class ReconciliationScheduler(
         fixedDelayString = "\${payment.reconciliation.interval-ms:300000}",
         initialDelayString = "\${payment.reconciliation.initial-delay-ms:60000}"
     )
+    @SchedulerLock(name = "reconciliation")
     fun reconcile(): ReconciliationReport {
         val report = reconciliationService.runFullReconciliation(
             Duration.ofMinutes(stuckThresholdMinutes)

@@ -1,5 +1,6 @@
 package com.paymentservice.payout
 
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.PageRequest
 import org.springframework.scheduling.annotation.Scheduled
@@ -24,6 +25,7 @@ class ReserveReleaseBatch(
         fixedDelayString = "\${payment.reserve.release-interval-ms:300000}",
         initialDelayString = "\${payment.reserve.release-initial-delay-ms:30000}"
     )
+    @SchedulerLock(name = "reserve-release")
     fun releaseMatured() {
         val batch = reserveHoldRepository.findByStatusAndReleaseAtLessThanEqual(
             ReserveHoldStatus.HELD, Instant.now(), PageRequest.of(0, BATCH_SIZE)

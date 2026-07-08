@@ -1,6 +1,7 @@
 package com.paymentservice.payment.outbox
 
 import com.paymentservice.payment.PaymentProviderPort
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
@@ -29,6 +30,7 @@ class OutboxDispatcher(
         fixedDelayString = "\${payment.outbox.dispatch-interval-ms:2000}",
         initialDelayString = "\${payment.outbox.initial-delay-ms:5000}"
     )
+    @SchedulerLock(name = "outbox-dispatcher", lockAtMostFor = "PT2M")
     fun dispatchPending() {
         val batch = outboxRepository.findDispatchable(BATCH_SIZE)
         for (event in batch) {

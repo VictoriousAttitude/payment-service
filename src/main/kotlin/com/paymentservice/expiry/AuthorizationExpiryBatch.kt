@@ -2,6 +2,7 @@ package com.paymentservice.expiry
 
 import com.paymentservice.payment.TransactionRepository
 import io.micrometer.core.instrument.MeterRegistry
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.data.domain.PageRequest
@@ -30,6 +31,7 @@ class AuthorizationExpiryBatch(
         fixedDelayString = "\${payment.authorization.interval-ms:300000}",
         initialDelayString = "\${payment.authorization.initial-delay-ms:30000}"
     )
+    @SchedulerLock(name = "authorization-expiry")
     fun expireStaleAuthorizations() {
         val cutoff = Instant.now().minus(Duration.ofMinutes(validityMinutes))
         val batch = transactionRepository.findExpirableAuthorizations(cutoff, PageRequest.of(0, BATCH_SIZE))
