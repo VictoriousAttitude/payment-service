@@ -7,6 +7,8 @@ A payment processing service built around a double-entry ledger as the source of
 
 Kotlin, Spring Boot 3, PostgreSQL. Every design decision is spelled out with its tradeoff: the repository shows how I reason about correctness under concurrency and failure in money movement.
 
+Short on time? [`docs/walkthrough.md`](docs/walkthrough.md) is a 10-minute guided tour that runs every claim live: capture → ledger, the DB-level guards, the tamper drill, the recon oracles, the chaos verdict, the measured perf numbers and the executed restore drill.
+
 ## ledger integrity: defense in depth
 
 Correctness of the money is enforced at five independent layers, so a fault that slips one layer is still caught by the next. This is the core idea of the project.
