@@ -26,7 +26,7 @@ flowchart TB
     pg --> anchor
 ```
 
-Layer 1 rejects a bad write before it is sent. Layer 2 makes a bad write impossible to commit, enforced in the database below the application. Layer 3 sweeps the committed ledger on a schedule for any anomaly the first two missed. Layer 4 compares the ledger against the processor settlement file, the one input that is genuinely independent of this codebase. Layer 5 makes the committed history itself tamper-evident: entries are sealed under chained Merkle roots, so even a superuser edit below every other layer is exposed by recomputation.
+Layer 1 rejects a bad write before it is sent. Layer 2 makes a bad write impossible to commit, enforced in the database below the application. Layer 3 sweeps the committed ledger on a schedule for any anomaly the first two missed. Layer 4 compares the ledger against the processor settlement file, the one input that is genuinely independent of this codebase. Layer 5 makes the committed history itself tamper-evident: entries are sealed under chained Merkle roots, so even a superuser edit below every other layer is exposed by recomputation. The balance snapshots that accelerate reads (V23) sit deliberately outside this chain: a derived, rebuildable cache over the immutable log, whose drift against the raw ledger SUM is itself one of layer 3's scheduled checks.
 
 ## architecture
 
@@ -67,15 +67,33 @@ Layer 1 rejects a bad write before it is sent. Layer 2 makes a bad write impossi
 
 Provider dispatch is never fired inline. `createPayment` commits the transaction **and** the outbox event in one transaction; a separate dispatcher delivers it. A crash between commit and provider call can't lose the call — the outbox redelivers and the webhook handler is idempotent.
 
+All nine scheduled batches (outbox dispatch, settlement, expiry, the payout and reserve cycles, reconciliation, anchor sealing, snapshot folds) take a ShedLock lease in the same database (V24), so running more than one replica never double-fires a batch: `SKIP LOCKED` makes the workers contention-safe row by row, the lease makes each batch single-flight cluster-wide. A graceful shutdown releases the lease; a SIGKILLed pod's lease is reclaimed when `lockAtMostFor` expires.
+
 ## payment state machine
 
-```
-CREATED ──→ PENDING ──→ AUTHORIZED ──→ CAPTURED ──→ SETTLED
-   │           │            │              │
-   └→ FAILED   └→ FAILED    └→ FAILED      └→ REFUNDED
+```mermaid
+stateDiagram-v2
+    CREATED --> PENDING
+    CREATED --> FAILED
+    PENDING --> AUTHORIZED
+    PENDING --> FAILED
+    AUTHORIZED --> CAPTURED
+    AUTHORIZED --> PARTIALLY_CAPTURED
+    AUTHORIZED --> VOIDED
+    AUTHORIZED --> EXPIRED
+    AUTHORIZED --> FAILED
+    PARTIALLY_CAPTURED --> PARTIALLY_CAPTURED
+    PARTIALLY_CAPTURED --> CAPTURED
+    PARTIALLY_CAPTURED --> PARTIALLY_REFUNDED
+    PARTIALLY_CAPTURED --> REFUNDED
+    CAPTURED --> SETTLED
+    CAPTURED --> PARTIALLY_REFUNDED
+    CAPTURED --> REFUNDED
+    PARTIALLY_REFUNDED --> PARTIALLY_REFUNDED
+    PARTIALLY_REFUNDED --> REFUNDED
 ```
 
-Every transition is enforced by `PaymentStatus.transitionTo()`. Invalid transitions throw `InvalidStateTransitionException` (HTTP 409). Terminal states (`SETTLED`, `FAILED`, `REFUNDED`) have no outgoing edges. Each transition is recorded as an immutable row in `transaction_events` (append-only audit history).
+Eleven statuses; every transition is enforced by `PaymentStatus.transitionTo()`, and an invalid one is HTTP 409. Partial capture and refund **self-loop**: each successive partial operation re-enters the same state until the running total reaches the boundary (`captured == amount` → `CAPTURED`, `refunded == captured` → `REFUNDED`) — the money invariants themselves are enforced from ledger sums, not from the coarse label. Capture and refund are sequential phases: once a refund starts, there is no further capture edge. `VOIDED` (merchant cancellation) and `EXPIRED` (the auth hold lapsing on a schedule) release a **clean** authorization only; once anything is captured, the path forward is refund. Terminal states (`SETTLED`, `FAILED`, `REFUNDED`, `VOIDED`, `EXPIRED`) have no outgoing edges, and the V16 trigger makes them absorbing below the application too. Each transition is recorded as an immutable row in `transaction_events` (append-only audit history).
 
 ## double-entry ledger
 
@@ -91,6 +109,8 @@ Every money movement creates balanced entries. Debits always equal credits.
 **Refund** reverses with opposite entries. `LedgerService.validateBalance()` asserts `sum(debits) == sum(credits)` before persisting — if the math is wrong, the transaction rolls back.
 
 Entries are grouped by `posting_group_id`, the atomic unit the deferred balance trigger checks at commit. Payment postings use the transaction id as their group; treasury postings (payouts, reserve releases) have **no** transaction — their group is the payout or hold id.
+
+A balance is always a ledger derivation, never a stored counter — but reads no longer pay a full-history scan. A rolling snapshot (V23) checkpoints debit/credit totals per (account, currency) behind a single fold cursor, and a live read is snapshot plus the entries created after the cursor, so read cost is bounded by the fold cadence rather than ledger size. The snapshot is a derived cache, not a source of truth: it carries no append-only trigger, is rebuildable from the log at any time, and scheduled reconciliation re-derives exact balances from `ledger_entries` and flags any drift.
 
 ## payouts and rolling reserve
 
@@ -138,6 +158,8 @@ Amounts are stored as `BIGINT` minor units (never floats). Fees are basis points
 | Testcontainers, not H2 | H2 differs from PostgreSQL on JSONB, triggers, partial indexes, constraints |
 | state machine in enum | compile-time exhaustive checks; you can't add a state without defining its transitions |
 | Spring Modulith boundaries | `ApplicationModules.verify()` fails the build on a module cycle or cross-module access of internal types |
+| ShedLock lease on every scheduled job | two replicas would double-fire every batch; a lease in the same PG (V24) makes each of the nine jobs single-flight cluster-wide, with `lockAtMostFor` as the crash reclaim |
+| balance snapshots as a derived cache | reads are checkpoint + tail, not a full-history SUM; no trigger protects the snapshot because it is rebuildable — reconciliation audits its drift against the raw ledger |
 
 ## answering the obvious objections
 
@@ -170,6 +192,11 @@ All `/api/v1/payments/**` and `/api/v1/merchants/**` requests require an `X-Api-
 | GET | `/api/v1/payments/{id}` | get payment status (owner only) |
 | POST | `/api/v1/payments/{id}/capture` | capture authorized payment (atomic: status + ledger) |
 | POST | `/api/v1/payments/{id}/refund` | refund captured payment (atomic: status + ledger) |
+| POST | `/api/v1/payments/{id}/void` | void a clean authorization (nothing captured; releases the hold) |
+| POST | `/api/v1/payments/{id}/disputes` | open a dispute (stands in for the acquirer's chargeback event) |
+| GET | `/api/v1/payments/{id}/disputes` | list disputes (owner only) |
+| POST | `/api/v1/payments/{id}/disputes/{disputeId}/evidence` | submit evidence before the Camunda-managed deadline |
+| POST | `/api/v1/payments/{id}/disputes/{disputeId}/resolve` | resolve won/lost; a loss posts the chargeback clawback + fee |
 | POST | `/api/v1/webhooks/provider-callback` | provider authorization callback (`X-Webhook-Signature` HMAC) |
 | GET | `/api/v1/merchants/{id}/balance` | per-currency pending / available / reserve, computed from the ledger |
 | POST | `/api/v1/merchants/{id}/payouts` | disburse the payable balance (amount optional = full available) |
@@ -202,9 +229,21 @@ All `/api/v1/payments/**` and `/api/v1/merchants/**` requests require an `X-Api-
 | PostgreSQL | 17 | JSONB, triggers, partial indexes, CHECK constraints |
 | Flyway | managed | versioned schema migrations, repeatable builds |
 | Testcontainers | 1.21.4 | real PostgreSQL in tests, not H2 |
+| ShedLock | 5.16.0 | JDBC-backed lease per scheduled job — single-flight batches across replicas |
 | SpringDoc OpenAPI | 2.8.6 | auto-generated API docs from controllers |
 
 ## project structure
+
+The service is one Gradle module; the verifiers that audit it are deliberately separate toolchains:
+
+```
+├── recon/     # Python: settlement recon oracle + procsim adversary + anchorverify (zero runtime deps)
+├── mbt/       # Python: model-based conformance suite driving the live API against a reference model
+├── chaos/     # Python: jepsen-lite fault-injection harness with a pure offline checker
+├── k8s/       # CNPG HA Postgres + app manifests + WORM (Object Lock) backup variant
+├── contract/  # golden CSV fixtures pinning the JVM/Python settlement wire contract
+└── src/       # the service ↓
+```
 
 ```
 src/main/kotlin/com/paymentservice/
@@ -234,11 +273,11 @@ src/main/kotlin/com/paymentservice/
 
 ## testing
 
-41 test classes, 259 tests, all green. Integration tests run against real PostgreSQL via Testcontainers.
+43 test classes, 269 tests, all green. Integration tests run against real PostgreSQL via Testcontainers.
 
 - **unit**: state machine transitions/terminals (`PaymentStatusTest`), fee rounding direction (`LedgerFeeTest`), money model and ISO 4217 exponents (`MoneyTest`), settlement movement projection (`SettlementExtractorTest`), acquirer CSV strict parsing (`AcquirerCsvParserTest`), pure file reconciliation semantics incl. window boundary and currency short-circuit (`SettlementFileReconcilerTest`), RFC 6962 tree, canonical leaf codec and chain hashing with golden vectors pinned identically in the Python verifier (`MerkleTreeTest`, `CanonicalLeafCodecTest`, `AnchorChainTest`, `AnchorLeafCsvTest`), HMAC signing + replay window (`WebhookSignerTest`), dispute state machine (`DisputeStatusTest`), module boundaries (`ModularityTest`)
-- **integration**: full lifecycle + ledger/balance math, idempotency + concurrent double-capture (409), partial and multi capture with partial refund, authorization void and expiry, disputes and chargebacks with ledger clawback (pre- and post-settlement), outbox concurrency (one winner via `SKIP LOCKED`) + backoff/dead-letter, signed-webhook acceptance/rejection, settlement split + reserve hold/release, payout lifecycle + concurrent double-payout race (row lock, one winner), ledger export to the recon movement CSV, settlement-file ingestion (sha dedup, persisted verdicts, upload/inspection endpoints) + a fault matrix proving every discrepancy class is classified against the live ledger, epoch anchoring (explicit membership, chained roots) + superuser tamper drills proving entry and anchor mutations surface as root/chain mismatches, append-only history immutability, the deferred balance/terminal/ceiling/payable-floor constraint triggers, provider retry and circuit breaker, auth + ownership (401/403/404), reconciliation, prometheus counters
-- **mutation**: pitest over the money and security core (`./gradlew pitest`), and the Python recon core via `mutmut` with a zero survivor gate in CI
+- **integration**: full lifecycle + ledger/balance math, idempotency + concurrent double-capture (409), partial and multi capture with partial refund, authorization void and expiry, disputes and chargebacks with ledger clawback (pre- and post-settlement), outbox concurrency (one winner via `SKIP LOCKED`) + backoff/dead-letter, signed-webhook acceptance/rejection, settlement split + reserve hold/release, payout lifecycle + concurrent double-payout race (row lock, one winner), ledger export to the recon movement CSV, settlement-file ingestion (sha dedup, persisted verdicts, upload/inspection endpoints) + a fault matrix proving every discrepancy class is classified against the live ledger, epoch anchoring (explicit membership, chained roots) + superuser tamper drills proving entry and anchor mutations surface as root/chain mismatches, append-only history immutability, the deferred balance/terminal/ceiling/payable-floor constraint triggers, rolling balance-snapshot folds audited against the exact ledger SUM, boundary validation of the jsonb `paymentMethod` (a 400 at the gate — first surfaced as an INSERT-time 500 by the conformance suite), provider retry and circuit breaker, auth + ownership (401/403/404), reconciliation, prometheus counters
+- **mutation**: pitest over the money and security core (`./gradlew pitest`); each Python core — recon engine, anchor verifier, chaos checker, conformance model — carries its own `mutmut` zero-survivor gate (recon's runs in CI)
 
 ```bash
 ./gradlew test
@@ -353,9 +392,43 @@ done
 anchorverify --anchors anchors.json --leaves-dir leaves; echo "exit: $?"   # TAMPER EVIDENCE, exit 1
 ```
 
+## model-based conformance: the live api vs a reference model
+
+Example-based tests check the sequences someone thought to write down. The conformance suite (`mbt/`) searches the sequence space instead: a pure Python reference model — the transition table mirrored from `PaymentStatus`, capture/refund arithmetic, and the server's decision order (the amount-bound 422 is checked before the transition 409) — is driven in lockstep with the live HTTP API by a Hypothesis stateful machine. It interleaves partial captures, partial refunds, voids, idempotent replays and key-reuse conflicts across several payments at once, asserts after every step that the API and the model agree on status and every amount, and shrinks any divergence to a minimal reproducer. The provider simulator authorizes at random by design; the machine treats the observed `AUTHORIZED`/`FAILED` outcome as an environmental input, and everything downstream of that observation is deterministic and checked exactly. The model is the oracle, so the model itself sits under the same `mutmut` zero-survivor gate as the recon engine.
+
+The suite paid for itself on its first live run. `paymentMethod` is persisted into a jsonb column and nothing validated that the value was JSON: a bare token like `card` passed bean validation and surfaced as a 500 from the INSERT — no example-based test had ever sent the field. The fix is a `@JsonDocument` bean-validation constraint aligned with the Postgres json parser (blank and trailing-token inputs rejected, null left to the field's own nullability), turning the fault into a 400 at the gate; a machine rule now pins that contract.
+
+```bash
+docker compose up -d --build   # the suite skips itself when no server answers
+cd mbt
+uv run pytest tests/test_live_conformance.py -q
+MBT_EXAMPLES=15 MBT_STEPS=40 uv run pytest tests/test_live_conformance.py -q   # deeper search
+```
+
+## kubernetes: ha postgres and worm backups
+
+`k8s/` is a runnable slice (kind + the CloudNativePG operator), not aspiration. Postgres runs as a three-instance CNPG cluster under quorum synchronous replication: a payment acknowledged with a 2xx is on a standby before the client sees the response, so a primary failover cannot lose it. The app runs two replicas behind a PodDisruptionBudget with the probe groups split deliberately — readiness includes the database, liveness does not — so a failover makes pods briefly unready (traffic pauses) instead of restarting them through the promotion. Graceful drain deregisters the endpoint before SIGTERM and Spring finishes in-flight requests inside the termination budget. Flyway's advisory lock serializes concurrent replica starts, and `maxUnavailable: 0` means a bad migration stalls the rollout rather than taking the service down; migrations must stay expand/contract so old and new pods coexist mid-roll.
+
+The optional `backup/` overlay adds the external witness the anchoring trust root needs: CNPG continuous backups into a MinIO bucket under COMPLIANCE-mode Object Lock — WORM, so no role can delete or overwrite a backup before retention expires, not the store's root user and not a compromised database role. Setup, failover and drain drills, and the trade-offs (kindnet ignores NetworkPolicy; restricted PSS applies to CNPG and MinIO too): `k8s/README.md`.
+
+## chaos harness: breaking the cluster on purpose
+
+The deployment above makes falsifiable claims: synchronous replication loses no acknowledged commit on failover, ShedLock hands scheduled work to a survivor, a SIGKILLed pod's lease is reclaimed. The harness (`chaos/`) turns them into a pass/fail gate in Jepsen's shape — a workload issues concurrent payments while a nemesis force-kills app pods and the CNPG primary, every attempt is appended to a history, and a pure checker decides afterwards whether the history plus the final observed state satisfy the model.
+
+The core of it is the outcome trichotomy. A distributed operation has three results, not two: `OK` (2xx — the write definitely happened and must survive the fault), `FAIL` (clean 4xx — it definitely did not and must leave no trace), and `INFO` (timeout, dropped socket, 5xx — unknown). Collapsing `INFO` into `FAIL` is the classic lost-update bug; instead the workload retries the same idempotency key on `INFO`, which is what makes the double-charge check meaningful. Seven properties are verified, and the two that need the client's view of what was acknowledged — P1, every acknowledged create survives in the final state; P2, one idempotency key yields at most one transaction — are the ones the service cannot certify about itself. The rest correlate the service's own post-fault self-reports with a specific injected fault: posting-group atomicity for unknown-outcome ops, per-currency double-entry balance, snapshot-vs-SUM drift, anchor-chain verification, nothing stuck after quiescence.
+
+The history file is flushed per operation, so it survives the harness itself being killed, and a failing run is reproducible from its artifacts alone — no cluster required:
+
+```bash
+chaos run --nemesis both --ops 200 --threads 8 --history history.jsonl --final final.json
+chaos check --history history.jsonl --final final.json   # same verdict on any machine
+```
+
+Cluster setup and full flags: `chaos/README.md`.
+
 ## database schema
 
-22 Flyway migrations (`hibernate.ddl-auto: validate`, Flyway owns the schema):
+24 Flyway migrations (`hibernate.ddl-auto: validate`, Flyway owns the schema):
 
 | migration | change |
 |-----------|--------|
@@ -381,6 +454,8 @@ anchorverify --anchors anchors.json --leaves-dir leaves; echo "exit: $?"   # TAM
 | `V20` | deferred constraint trigger: a payout never drives the payable balance negative |
 | `V21` | `settlement_files` (unique content sha) + `settlement_file_discrepancies` for ingestion verdicts |
 | `V22` | `ledger_anchors` (chained epoch roots) + `ledger_anchor_leaves` (explicit membership), both append-only by trigger |
+| `V23` | `ledger_balance_snapshots` + single-row fold cursor: balance reads become checkpoint + tail instead of full-history SUM |
+| `V24` | `shedlock` lease table: every scheduled batch single-flight across replicas |
 
 ## production gaps / next steps
 
@@ -389,5 +464,5 @@ This demonstrates the correctness and operability primitives. Real card processi
 - **real acquirer/network integration**: the provider is a simulator. Settlement-file ingestion accepts a simplified Stripe-style CSV over REST rather than SFTP/AS2 delivery, matches on provider reference rather than ARN (and without quoting or free-text fields a real acquirer format needs), reconciles against a full-ledger extract per file rather than a date-scoped one, and settlement confirmation stays timer-driven rather than file-acknowledged; discrepancies raise alerts and metrics but have no ops workflow (no case management, no repair)
 - **PCI scope**: card tokenization/vaulting and **SCA/3DS** (PSD2) are absent
 - **payout rails**: disbursement stops at `PAYOUT_CLEARING` — no bank file/SEPA integration, payout confirmation is a T+N milestone rather than a bank acknowledgment
-- **anchoring trust root**: the anchor chain lives in the same database it attests to, so an attacker who can rewrite entries and recompute every anchor from genesis is undetectable; real tamper-evidence publishes the chain head to an external WORM store (object-lock bucket, transparency log) and anchoring is attest-only with no automated response workflow
-- **scale/ops**: time-partitioning and archival for the append-only tables, distributed tracing, leader election for scheduled jobs, rate limiting, API-key rotation/scopes
+- **anchoring trust root**: the live anchor chain sits in the database it attests to, so an attacker who can rewrite entries *and* recompute every anchor from genesis is invisible to the online verifier. The WORM backup variant (`k8s/backup/`, COMPLIANCE Object Lock) retains copies no role can rewrite, which bounds that exposure to the backup interval — but per-epoch publication of the chain head to a transparency log, and any automated response workflow, are still absent
+- **scale/ops**: time-partitioning and archival for the append-only tables, distributed tracing, rate limiting, API-key rotation/scopes
