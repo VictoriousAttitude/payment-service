@@ -85,10 +85,14 @@ def _inject(
             break
         if mode == "app" or (mode == "both" and turn % 2 == 0):
             victim = nemesis.kill_app_pod()
-            print(f"nemesis: killed app pod {victim}")
-        elif mode in {"db", "both"}:
+            kind = "app pod"
+        else:
             victim = nemesis.kill_db_primary()
-            print(f"nemesis: killed db primary {victim}")
+            kind = "db primary"
+        if victim is None:
+            print(f"nemesis: no {kind} available to kill this tick")
+        else:
+            print(f"nemesis: killed {kind} {victim}")
         turn += 1
 
 

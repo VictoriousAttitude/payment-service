@@ -15,6 +15,7 @@ Imperative shell. Requires the live cluster; not unit tested.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterable
 
 from chaos.domain.history import (
@@ -27,6 +28,15 @@ from chaos.domain.history import (
     coerce_int,
 )
 from chaos.driver.client import Client
+
+# The final state is ground truth for the checker, so every read must be
+# DEFINITIVE: a 2xx with a body (present) or a clean 4xx (absent). An INFO
+# (timeout, 5xx, dropped socket while the cluster is still recovering) is
+# retried; if it never resolves the run is INCONCLUSIVE and collection aborts.
+# Found live: treating an INFO GET as absence made three committed writes read
+# as P1 "lost committed write" false positives during a residual failover.
+_MAX_ATTEMPTS = 20
+_RETRY_DELAY_S = 3.0
 
 
 def collect(client: Client, history: Iterable[HistoryEntry]) -> FinalState:
@@ -48,10 +58,25 @@ def _fetch_transactions(
     }
     found: dict[str, FinalTransaction] = {}
     for txn_id in sorted(ids):
+        transaction = _fetch_transaction(client, txn_id)
+        if transaction is not None:
+            found[txn_id] = transaction
+    return found
+
+
+def _fetch_transaction(client: Client, txn_id: str) -> FinalTransaction | None:
+    for _ in range(_MAX_ATTEMPTS):
         response = client.request("GET", f"/api/v1/payments/{txn_id}")
         if response.outcome is Outcome.OK and response.body is not None:
-            found[txn_id] = _to_transaction(txn_id, response.body)
-    return found
+            return _to_transaction(txn_id, response.body)
+        if response.outcome is Outcome.FAIL:
+            # a clean 4xx is the one definitive absence signal (404: no row).
+            return None
+        time.sleep(_RETRY_DELAY_S)
+    raise RuntimeError(
+        f"could not definitively read transaction {txn_id}; "
+        "final state is inconclusive, refusing to emit a verdict"
+    )
 
 
 def _to_transaction(txn_id: str, body: dict[str, object]) -> FinalTransaction:
@@ -66,14 +91,21 @@ def _to_transaction(txn_id: str, body: dict[str, object]) -> FinalTransaction:
 
 
 def _fetch_reconciliation(client: Client) -> ReconciliationSnapshot:
-    response = client.request("GET", "/api/v1/reconciliation", authed=False)
-    if response.body is None:
-        raise RuntimeError(f"reconciliation endpoint unavailable: {response.error}")
-    return ReconciliationSnapshot.from_json(response.body)
+    response = _get_report(client, "/api/v1/reconciliation")
+    return ReconciliationSnapshot.from_json(response)
 
 
 def _fetch_anchor(client: Client) -> AnchorSnapshot:
-    response = client.request("GET", "/api/v1/ledger-anchors/verify", authed=False)
-    if response.body is None:
-        raise RuntimeError(f"anchor verify endpoint unavailable: {response.error}")
-    return AnchorSnapshot.from_json(response.body)
+    response = _get_report(client, "/api/v1/ledger-anchors/verify")
+    return AnchorSnapshot.from_json(response)
+
+
+def _get_report(client: Client, path: str) -> dict[str, object]:
+    error: str | None = None
+    for _ in range(_MAX_ATTEMPTS):
+        response = client.request("GET", path, authed=False)
+        if response.outcome is Outcome.OK and response.body is not None:
+            return response.body
+        error = response.error
+        time.sleep(_RETRY_DELAY_S)
+    raise RuntimeError(f"report endpoint {path} unavailable: {error}")

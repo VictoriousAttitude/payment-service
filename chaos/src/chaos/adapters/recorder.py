@@ -20,6 +20,7 @@ from chaos.domain.history import HistoryEntry
 class HistoryWriter:
     def __init__(self, path: Path) -> None:
         self._path = path
+        path.parent.mkdir(parents=True, exist_ok=True)
         self._handle = path.open("w", encoding="utf-8")
 
     def append(self, entry: HistoryEntry) -> None:

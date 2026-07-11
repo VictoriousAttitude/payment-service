@@ -8,5 +8,6 @@ __pycache__/
 mutants/
 *.egg-info/
 # run artifacts
+runs/
 history.jsonl
 final.json

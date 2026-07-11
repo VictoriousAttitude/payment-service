@@ -42,18 +42,27 @@ class Nemesis:
         self._rng = rng or random.Random()  # noqa: S311
 
     def kill_app_pod(self) -> str | None:
-        pods = self._pods(self._config.app_selector)
-        if not pods:
+        # a pod can vanish between the list and the delete (it is being killed
+        # and rescheduled constantly); a missed tick is fine, a crashed harness
+        # is not. Found live: this race aborted a run mid-workload.
+        try:
+            pods = self._pods(self._config.app_selector)
+            if not pods:
+                return None
+            victim = self._rng.choice(pods)
+            self._force_delete(victim)
+        except subprocess.CalledProcessError:
             return None
-        victim = self._rng.choice(pods)
-        self._force_delete(victim)
         return victim
 
     def kill_db_primary(self) -> str | None:
-        primary = self._db_primary()
-        if primary is None:
+        try:
+            primary = self._db_primary()
+            if primary is None:
+                return None
+            self._force_delete(primary)
+        except subprocess.CalledProcessError:
             return None
-        self._force_delete(primary)
         return primary
 
     def _db_primary(self) -> str | None:
