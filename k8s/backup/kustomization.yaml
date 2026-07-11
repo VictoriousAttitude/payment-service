@@ -7,7 +7,7 @@ kind: Kustomization
 # operator/Job retries (the bucket Job waits for MinIO; CNPG reconciles backup
 # config once the bucket exists).
 resources:
-  - ../
+  - ../base
   - minio-credentials.yaml
   - minio.yaml
   - minio-bucket-job.yaml

@@ -30,6 +30,10 @@ spec:
             capabilities:
               drop: ["ALL"]
           env:
+            # mc writes its config under $HOME/.mc; as uid 1000 there is no
+            # home directory, so without this it dies on `mkdir /.mc`.
+            - name: HOME
+              value: /tmp
             - name: ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
