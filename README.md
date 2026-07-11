@@ -112,6 +112,8 @@ Entries are grouped by `posting_group_id`, the atomic unit the deferred balance 
 
 A balance is always a ledger derivation, never a stored counter — but reads no longer pay a full-history scan. A rolling snapshot (V23) checkpoints debit/credit totals per (account, currency) behind a single fold cursor, and a live read is snapshot plus the entries created after the cursor, so read cost is bounded by the fold cadence rather than ledger size. The snapshot is a derived cache, not a source of truth: it carries no append-only trigger, is rebuildable from the log at any time, and scheduled reconciliation re-derives exact balances from `ledger_entries` and flags any drift.
 
+This claim is measured, not asserted: on a 5M-row ledger the full-history SUM costs ~225 ms and grows linearly, the snapshot read stays flat at ~0.5 ms, and the balance endpoint that collapsed at 10 req/s before the wiring holds 100 req/s at p99 5.6 ms after it. Harness, method and honesty notes: [`perf/`](perf/README.md).
+
 ## payouts and rolling reserve
 
 Settlement is not just a status milestone: it splits the merchant's captured net across three per-merchant pots, completing the money lifecycle capture → settle → reserve → payout.
@@ -241,6 +243,7 @@ The service is one Gradle module; the verifiers that audit it are deliberately s
 ├── mbt/       # Python: model-based conformance suite driving the live API against a reference model
 ├── chaos/     # Python: jepsen-lite fault-injection harness with a pure offline checker
 ├── k8s/       # CNPG HA Postgres + app manifests + WORM (Object Lock) backup variant
+├── perf/      # measured performance: snapshot-vs-SUM bench + k6 API load profiles
 ├── contract/  # golden CSV fixtures pinning the JVM/Python settlement wire contract
 └── src/       # the service ↓
 ```

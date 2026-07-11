@@ -29,6 +29,15 @@ SCALES=(100000 500000 2500000)     # cumulative PAIRS (total rows = 2x)
 
 psql_db() { docker compose exec -T db psql -qX -v ON_ERROR_STOP=1 -U postgres -d payments "$@"; }
 
+clean() { # make reruns idempotent: drop previous bench rows and their snapshots
+  psql_db <<SQL
+SET session_replication_role = replica;
+DELETE FROM ledger_entries WHERE description IN ('bench', 'bench-tail');
+DELETE FROM ledger_balance_snapshots
+WHERE account_id IN ('$MERCHANT', '$INCOMING');
+SQL
+}
+
 seed_pairs() { # $1..$2 inclusive pair range, spread in the past (pre-cursor)
   psql_db <<SQL
 SET session_replication_role = replica;
@@ -92,14 +101,16 @@ COMMIT;
 SQL
   docker compose exec -T db bash -c "cat > /tmp/snapshot_tail.sql" <<SQL
 BEGIN;
-SELECT as_of AS cursor FROM ledger_snapshot_cursor WHERE id = 1 \gset
+-- pgbench has no :'var' string interpolation (psql-only), so the cursor rides
+-- as an epoch number; to_timestamp() restores the exact same comparison.
+SELECT extract(epoch FROM as_of) AS cursor FROM ledger_snapshot_cursor WHERE id = 1 \gset
 SELECT total_credits - total_debits FROM ledger_balance_snapshots
 WHERE account_type = 'MERCHANT' AND account_id = '$MERCHANT' AND currency = 'EUR';
 SELECT COALESCE(SUM(CASE WHEN entry_type = 'CREDIT' THEN amount ELSE 0 END), 0)
      - COALESCE(SUM(CASE WHEN entry_type = 'DEBIT' THEN amount ELSE 0 END), 0)
 FROM ledger_entries
 WHERE account_type = 'MERCHANT' AND account_id = '$MERCHANT' AND currency = 'EUR'
-  AND created_at > :'cursor';
+  AND created_at > to_timestamp(:cursor);
 COMMIT;
 SQL
 }
@@ -110,6 +121,7 @@ bench() { # $1 = script path in container; prints avg latency in ms
     | awk '/latency average/ {print $4}'
 }
 
+clean
 echo "scale(total rows) | full SUM avg ms | snapshot+tail avg ms (tail=$((TAIL_PAIRS)) pairs)"
 prev=0
 for pairs in "${SCALES[@]}"; do
