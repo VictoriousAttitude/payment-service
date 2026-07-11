@@ -34,7 +34,13 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-aop")
 	implementation("io.micrometer:micrometer-registry-prometheus")
 	implementation("io.github.resilience4j:resilience4j-spring-boot3:2.2.0")
-	implementation("org.camunda.bpm.springboot:camunda-bpm-spring-boot-starter:7.23.0")
+	implementation("org.camunda.bpm.springboot:camunda-bpm-spring-boot-starter:7.23.0") {
+		// Camunda ships the JAXB RI under its legacy com.sun.xml.bind coordinates;
+		// Hibernate already brings the same 4.0.5 implementation as
+		// org.glassfish.jaxb:jaxb-runtime. Keeping both duplicates every JAXB class
+		// and makes bootJar fail on the colliding jaxb-core-4.0.5.jar entry.
+		exclude(group = "com.sun.xml.bind")
+	}
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 	implementation("org.springframework.boot:spring-boot-starter-validation")
 	implementation("org.springframework.boot:spring-boot-starter-web")
