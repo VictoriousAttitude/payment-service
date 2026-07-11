@@ -40,12 +40,21 @@ jobs:
             build/reports/detekt
           if-no-files-found: ignore
 
-  python-recon:
-    name: python recon (ruff, mypy, pytest, mutmut)
+  # every python core in the repo carries the same gate: the recon oracle and
+  # anchor verifier, the chaos checker, and the mbt conformance model. each is
+  # a pure functional core, so each is mutation-tested to zero survivors. the
+  # mbt live-conformance module and the chaos driver need a running system and
+  # skip themselves here; only the pure cores are gated.
+  python:
+    name: python ${{ matrix.project }} (ruff, mypy, pytest, mutmut)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [recon, mbt, chaos]
     defaults:
       run:
-        working-directory: recon
+        working-directory: ${{ matrix.project }}
     steps:
       - uses: actions/checkout@v4
 
@@ -67,13 +76,13 @@ jobs:
       - name: pytest
         run: pytest -q
 
-      # the reconciliation core claims to be provable; the mutation run proves
-      # the tests actually kill injected faults. any survivor fails the build.
+      # the cores claim to be provable; the mutation run proves the tests
+      # actually kill injected faults. any survivor fails the build.
       - name: mutation testing (zero survivors)
         run: |
           mutmut run
           mutmut results
           if mutmut results | grep -qE ': survived'; then
-            echo "::error::surviving mutants found in the reconciliation core"
+            echo "::error::surviving mutants found in ${{ matrix.project }}"
             exit 1
           fi
