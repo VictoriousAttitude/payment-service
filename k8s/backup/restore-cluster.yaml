@@ -1,0 +1,56 @@
+# Point-in-time recovery Cluster. NOT part of the kustomization - this is
+# applied by hand during a restore drill or a real incident, after editing
+# targetTime. It bootstraps a fresh single-instance cluster from the WORM
+# bucket: latest base backup before targetTime + WAL replay up to targetTime.
+#
+# Usage:
+#   1. Set spec.bootstrap.recovery.recoveryTarget.targetTime to the desired
+#      instant (must be after the end of at least one completed base backup).
+#   2. kubectl apply -f k8s/backup/restore-cluster.yaml
+#   3. Wait: kubectl wait --for=condition=Ready cluster/payments-db-restore -n payments
+#   4. Verify, then delete the cluster when done (the PVC goes with it).
+#
+# The restored cluster gets its own credentials secret (payments-db-restore-app)
+# and services (payments-db-restore-rw). It does NOT archive WAL anywhere, so a
+# drill cannot pollute the production backup bucket.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: payments-db-restore
+  namespace: payments
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17
+
+  bootstrap:
+    recovery:
+      source: payments-db
+      recoveryTarget:
+        # <-- EDIT ME: executed 2026-07-11 drill used the instant between
+        # phase A and phase B writes; see k8s/backup/RESTORE-DRILL.md.
+        targetTime: "2026-07-11 14:58:44.303304+00"
+
+  externalClusters:
+    - name: payments-db
+      barmanObjectStore:
+        destinationPath: s3://payments-backups/
+        endpointURL: http://minio.payments.svc:9000
+        s3Credentials:
+          accessKeyId:
+            name: minio-credentials
+            key: ACCESS_KEY_ID
+          secretAccessKey:
+            name: minio-credentials
+            key: SECRET_ACCESS_KEY
+        wal:
+          compression: gzip
+
+  storage:
+    size: 2Gi
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
