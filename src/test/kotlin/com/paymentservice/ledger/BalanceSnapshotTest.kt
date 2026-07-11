@@ -81,6 +81,34 @@ class BalanceSnapshotTest {
         assertAcceleratedMatchesNaive("second fold: delta absorbed into snapshot")
     }
 
+    /**
+     * Same invariant for the per-currency read the balance endpoint serves:
+     * the union of snapshot rows and post-cursor tail must equal the naive
+     * full-history GROUP BY - same currency set, same totals - at every
+     * cursor position.
+     */
+    @Test
+    fun `per-currency accelerated balances equal the naive grouped sums across folds`() {
+        fun assertMatchesNaive(message: String) {
+            for (accountType in listOf(AccountType.MERCHANT, AccountType.INCOMING, AccountType.PLATFORM)) {
+                val naive = ledgerRepository.computeBalancesByCurrency(accountType, merchantId)
+                    .associateBy { it.currency }
+                val accelerated = ledgerService.getBalancesByCurrency(accountType, merchantId)
+                    .associateBy { it.currency }
+                assertEquals(naive, accelerated, "$message ($accountType)")
+            }
+        }
+
+        captureEur(10_000)
+        assertMatchesNaive("pre-fold: no snapshot rows, pure tail")
+
+        snapshotProcessor.advance()
+        assertMatchesNaive("post-fold: pure snapshot rows, empty tail")
+
+        captureEur(10_000)
+        assertMatchesNaive("post-capture: snapshot rows merged with a live tail")
+    }
+
     @Test
     fun `folding moves a merchant credit from the live delta into the snapshot row`() {
         snapshotProcessor.advance()

@@ -13,6 +13,9 @@ interface BalanceSnapshotRepository : JpaRepository<BalanceSnapshot, UUID> {
         currency: String
     ): BalanceSnapshot?
 
+    /** All folded currencies of one account: the checkpoint side of a per-currency read. */
+    fun findByAccountTypeAndAccountId(accountType: AccountType, accountId: UUID): List<BalanceSnapshot>
+
     /**
      * Additive upsert of one account's folded delta. Native ON CONFLICT so the
      * checkpoint accumulates across folds with no read-modify-write race: a

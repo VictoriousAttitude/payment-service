@@ -389,9 +389,31 @@ class LedgerService(
     fun getPayableBalance(merchantId: UUID, currency: String): Long =
         accountBalance(AccountType.MERCHANT_PAYABLE, merchantId, currency.uppercase())
 
-    /** Per-currency balances of any account - pending, payable, reserve, clearing. */
-    fun getBalancesByCurrency(accountType: AccountType, accountId: UUID): List<CurrencyBalance> =
-        ledgerRepository.computeBalancesByCurrency(accountType, accountId)
+    /**
+     * Per-currency balances of any account - pending, payable, reserve,
+     * clearing. Reads via the rolling checkpoint like [accountBalance]: the
+     * folded snapshot rows merged with a per-currency SUM over only the
+     * entries after the cursor. The currency set is the union of both sides —
+     * a snapshot row exists iff the currency had entries at or before the
+     * cursor, a tail row iff it had entries after, so the union equals the
+     * currencies a full-history GROUP BY would return. Same MVCC rule as
+     * [accountBalance]: one read-only transaction so a concurrent fold cannot
+     * advance the cursor between the reads and double-count the folded window.
+     */
+    @Transactional(readOnly = true)
+    fun getBalancesByCurrency(accountType: AccountType, accountId: UUID): List<CurrencyBalance> {
+        val cursor = cursorRepository.findById(SnapshotProcessor.CURSOR_ID).orElseThrow().asOf
+        val folded = snapshotRepository
+            .findByAccountTypeAndAccountId(accountType, accountId)
+            .map { CurrencyBalance(it.currency, it.totalDebits, it.totalCredits) }
+        val tail = ledgerRepository.balancesByCurrencySince(accountType, accountId, cursor)
+        return (folded + tail)
+            .groupBy { it.currency }
+            .map { (currency, parts) ->
+                CurrencyBalance(currency, parts.sumOf { it.totalDebits }, parts.sumOf { it.totalCredits })
+            }
+            .sortedBy { it.currency }
+    }
 
     /** Merchants whose payable balance can fund at least [minimum], per currency. */
     fun payableBalancesAtLeast(minimum: Long): List<AccountCurrencyBalance> =

@@ -142,6 +142,28 @@ interface LedgerRepository : JpaRepository<LedgerEntry, UUID> {
     fun netSince(accountType: AccountType, accountId: UUID, currency: String, cutoff: Instant): Long
 
     /**
+     * Per-currency debit/credit totals for one account over only the entries
+     * created strictly after [cutoff]: the tail side of a per-currency
+     * checkpoint read. Mirrors [computeBalancesByCurrency] bounded to the
+     * un-folded tail, as [netSince] mirrors [computeBalance].
+     */
+    @Query("""
+        SELECT new com.paymentservice.ledger.CurrencyBalance(
+            le.currency,
+            SUM(CASE WHEN le.entryType = 'DEBIT' THEN le.amount ELSE 0 END),
+            SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE 0 END))
+        FROM LedgerEntry le
+        WHERE le.accountType = :accountType AND le.accountId = :accountId
+          AND le.createdAt > :cutoff
+        GROUP BY le.currency
+    """)
+    fun balancesByCurrencySince(
+        accountType: AccountType,
+        accountId: UUID,
+        cutoff: Instant
+    ): List<CurrencyBalance>
+
+    /**
      * Per-account debit/credit deltas for entries created in (previous, cutoff],
      * one row per (account_type, account_id, currency): the fold window the
      * snapshotter adds to the checkpoint each run.
